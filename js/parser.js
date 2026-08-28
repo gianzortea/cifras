@@ -11,9 +11,27 @@ const SECTION_WORDS = /^(intro|introdu[cç][aã]o|primeira parte|segunda parte|t
 
 const AMBIG_WORDS = /^(Sim|Mim|Fam|Mim7|Sim7)$/;
 
+/* Tablatura x linha de acordes separada por barra.
+   A regra antiga ("começa com nome de corda + |") engolia "D | A | Bm" como
+   tablatura, porque E, A, D, G e B são letra de acorde E nome de corda.
+   Agora só é tablatura se o que vem depois da barra for coisa de tab
+   (traços, casas, h/p/b/s) — nunca nome de acorde. */
+const TAB_TAIL = /^[-0-9hpbrsxt\/\\~|() ]*$/i;
+
 function isTabLine(s){
-  if(/^\s*[eEADGBbdag]\s*\|/.test(s)) return true;
-  return /-{4,}/.test(s) && /\|/.test(s);
+  const m = s.match(/^\s*[eEADGBbdag]\s*\|(.*)$/);
+  if(m && TAB_TAIL.test(m[1]) && /[-0-9]/.test(m[1])) return true;
+  if(/-{3,}/.test(s) && /\|/.test(s)) return true;
+  return /-{6,}/.test(s);
+}
+
+/** Limpa barras e pontuação em volta: "A|" -> "A", "G," -> "G", "(Am)" -> "Am" */
+function cleanChordToken(t){
+  let s = String(t).replace(/^\|+|\|+$/g, '').replace(/[.,;]+$/, '');
+  if(!s) return String(t);
+  const m = s.match(/^\(([^()]+)\)$/);
+  if(m && isChordToken(m[1])) s = m[1];
+  return s;
 }
 
 function isSectionLine(s){
@@ -44,8 +62,9 @@ function isChordLine(line){
   if(!toks.length) return false;
   let real = 0;
   for(const t of toks){
-    if(isChordToken(t.s)) { real++; continue; }
-    if(isModToken(t.s))   continue;
+    if(isChordToken(cleanChordToken(t.s))) { real++; continue; }
+    if(isModToken(t.s))       continue;   // | % - 2x N.C. (obs)
+    if(SECTION_WORDS.test(t.s)) continue; // "G D Em  Refrão"
     return false;
   }
   if(real === 0) return false;
@@ -102,14 +121,18 @@ function parseCifra(raw){
     }
     if(isTabLine(cur)){ lines.push({t:'tab', text: cur.replace(/\s+$/,'')}); continue; }
 
-    // seção pode vir junto com acordes: "[Intro] G  D  Em"
-    const secInline = cur.match(/^\s*\[([^\]]+)\]\s*(.*)$/);
+    // seção pode vir junto com acordes: "[Intro] G  D  Em" ou "Intro: G  D  Em"
+    let secInline = cur.match(/^\s*\[([^\]]+)\]\s*(.*)$/);
+    if(!secInline){
+      const m = cur.match(/^\s*([^:]{2,24}):\s*(\S.*)$/);
+      if(m && SECTION_WORDS.test(m[1].trim())) secInline = [m[0], m[1].trim(), m[2]];
+    }
     if(secInline){
       lines.push({t:'s', text: secInline[1].trim()});
       const rest = secInline[2];
       if(rest.trim()){
         if(isChordLine(rest)){
-          lines.push({ t:'l', text:'', ch: tokensWithPos(rest).map(x => ({ p: x.p, c: x.s })) });
+          lines.push({ t:'l', text:'', ch: tokensWithPos(rest).map(x => ({ p: x.p, c: cleanChordToken(x.s) })) });
         } else {
           lines.push({ t:'l', text: rest, ch: [] });
         }
@@ -119,7 +142,7 @@ function parseCifra(raw){
     if(isSectionLine(cur)){ lines.push({t:'s', text: sectionText(cur)}); continue; }
 
     if(isChordLine(cur)){
-      const chords = tokensWithPos(cur).map(x => ({ p: x.p, c: x.s }));
+      const chords = tokensWithPos(cur).map(x => ({ p: x.p, c: cleanChordToken(x.s) }));
       const next = src_lines[i+1];
       const nextIsLyric = next !== undefined && next.trim() && !isChordLine(next) &&
                           !isTabLine(next) && !isSectionLine(next);

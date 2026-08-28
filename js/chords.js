@@ -31,8 +31,9 @@ const BASS_RE = new RegExp(
   '^(' + NOTE_SRC + ')(' + ACC_SRC + ')$'
 );
 
-// tokens que aparecem em linha de acorde mas não são acorde
-const MOD_RE = /^(?:\||\|\||:\||\|:|%|-+|~|\(?\d+ ?[xX]\)?|\(?[xX] ?\d+\)?|\.\.\.|\*)$/;
+// tokens que aparecem em linha de acorde mas não são acorde:
+// barras, repetição (2x), traços de qualquer tipo, N.C. e comentários entre parênteses
+const MOD_RE = /^(?:\||\|\||:\||\|:|%|[-–—~]+|\(?\d+ ?[xX]\)?|\(?[xX] ?\d+\)?|\.\.\.|\*|N\.?C\.?|\([^()]*\))$/i;
 
 function normNote(n){
   const up = n.toUpperCase();
