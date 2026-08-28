@@ -112,12 +112,24 @@ Em três camadas, nessa ordem:
 
 Por isso `D/F#` sai `200232` e não uma invenção lá na 10ª casa.
 
-## Atualizando o app depois de editar os arquivos
+## Como a atualização chega no celular
 
-O service worker serve do cache primeiro e revalida em segundo plano
-(*stale-while-revalidate*). Isso deixa o app abrir instantâneo e funcionar sem
-internet — mas significa que, depois de alterar um arquivo, **a primeira abertura
-ainda mostra a versão antiga** e a segunda já traz a nova.
+Automática, sem reinstalar nada. Ao abrir o app com internet, o navegador baixa
+o `sw.js`; se mudou, o service worker novo instala, pré-carrega os arquivos e
+assume no lugar do antigo.
 
-Se estiver desenvolvendo e quiser ver a mudança na hora, no DevTools:
-Application → Storage → *Clear site data*, ou marque "Update on reload".
+A página que já está na tela continua com o código velho carregado na memória —
+por isso o app **avisa** em vez de trocar embaixo do seu pé: aparece uma barra
+"Nova versão disponível · Atualizar · Depois". Tocar em *Atualizar* recarrega e
+pronto; ignorar também funciona, porque na próxima abertura já entra a nova.
+
+**O aviso nunca aparece com uma cifra aberta.** Se a atualização chega enquanto
+você está tocando, ela fica guardada e a barra só surge quando você volta para a
+lista. Em Ajustes há ainda *Procurar atualização*, para conferir antes de um
+evento, e a versão instalada aparece no rodapé (`Cifras v9`).
+
+### Publicando uma nova versão
+
+`git push` — o Pages reconstrói em 1 a 2 minutos. **Suba o número em
+`const CACHE` no `sw.js`**: é ele que faz o service worker se ver como novo.
+Sem isso, nada muda no aparelho de ninguém.

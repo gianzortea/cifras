@@ -1372,8 +1372,14 @@ function viewSettings(){
         'que embute os arquivos e fica bem maior.</div>' +
 
       '<div class="sep" style="margin:20px 0"></div>' +
+      '<h3 style="font-size:15px;margin:0 0 10px">Versão</h3>' +
+      '<button class="btn" id="chkUpd" style="margin-bottom:9px">&#8635; Procurar atualização</button>' +
+      '<div class="hint">Atualiza sozinho quando você abre o app com internet. ' +
+        'Se estiver com uma cifra aberta, o aviso espera você sair dela.</div>' +
+
+      '<div class="sep" style="margin:20px 0"></div>' +
       '<button class="btn danger" id="wipe">Apagar tudo</button>' +
-      '<div class="hint" style="text-align:center;margin-top:18px">Cifras · funciona offline</div>' +
+      '<div class="hint" style="text-align:center;margin-top:18px">Cifras <span id="verNum"></span> · funciona offline</div>' +
     '</div>' +
     tabbar('cfg');
   bindNav(APP);
@@ -1383,6 +1389,9 @@ function viewSettings(){
   $('#cfgFit').onchange   = e => { S.fitMode = e.target.checked; Store.saveSettings(S); };
   $('#cfgFs').oninput     = e => { S.fontSize = +e.target.value; $('#fsv').textContent = S.fontSize + 'px'; Store.saveSettings(S); };
   $('#cfgSpd').oninput    = e => { S.scrollSpeed = +e.target.value; $('#spv').textContent = S.scrollSpeed; Store.saveSettings(S); };
+
+  $('#chkUpd').onclick = () => procurarAtualizacao();
+  versaoInstalada().then(v => { const el = $('#verNum'); if(el) el.textContent = v; });
 
   $('#expJson').onclick = () => doExport(false);
   $('#expFull').onclick = () => doExport(true);
@@ -1491,6 +1500,55 @@ async function applyImport(data, replace){
 applyTheme();
 render();
 
+/* ---------------- atualização do app ---------------- */
+let regSW = null;
+let temAtualizacao = false;
+
+/** Só avisa fora da cifra: ninguém quer esse banner no meio de um culto. */
+function avisarAtualizacaoSePuder(){
+  if(!temAtualizacao) return;
+  if($('#viewer')) return;              // tocando: deixa pra depois
+  if($('#updBar')) return;
+  const d = document.createElement('div');
+  d.id = 'updBar';
+  d.innerHTML = '<span>Nova versão disponível</span>' +
+    '<button class="upd-yes" id="updGo">Atualizar</button>' +
+    '<button class="upd-no" id="updNo">Depois</button>';
+  document.body.appendChild(d);
+  $('#updGo').onclick = () => location.reload();
+  $('#updNo').onclick = () => { temAtualizacao = false; d.remove(); };
+}
+
+async function procurarAtualizacao(){
+  if(!regSW){ toast('Atualização automática indisponível aqui'); return; }
+  toast('Procurando...');
+  try{
+    await regSW.update();
+    setTimeout(() => {
+      if(temAtualizacao) avisarAtualizacaoSePuder();
+      else toast('Já está na versão mais recente');
+    }, 1600);
+  }catch(e){ toast('Sem internet agora'); }
+}
+
+async function versaoInstalada(){
+  try{
+    const k = (await caches.keys()).find(x => x.indexOf('cifras-') === 0);
+    return k ? k.replace('cifras-', '') : '—';
+  }catch(e){ return '—'; }
+}
+
 if('serviceWorker' in navigator && location.protocol.startsWith('http')){
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // precisa ser mutável: numa aba que abriu sem service worker, a primeira troca
+  // é a instalação (não avisa) e as seguintes são atualizações de verdade (avisa)
+  let tinhaControlador = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').then(r => { regSW = r; }).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if(tinhaControlador){
+      temAtualizacao = true;
+      avisarAtualizacaoSePuder();
+    }
+    tinhaControlador = true;
+  });
+  window.addEventListener('hashchange', () => setTimeout(avisarAtualizacaoSePuder, 60));
 }

@@ -265,6 +265,19 @@ a{color:var(--acc); text-decoration:none}
   padding:10px 16px; border-radius:11px; font-size:13.5px; box-shadow:0 6px 20px rgba(0,0,0,.35);
   animation:up .18s ease;
 }
+/* aviso de nova versao */
+#updBar{
+  position:fixed; left:12px; right:12px; bottom:calc(70px + var(--safe-b));
+  z-index:150; display:flex; align-items:center; gap:9px;
+  background:var(--bg3); border:1px solid var(--acc); border-radius:13px;
+  padding:11px 12px; box-shadow:0 8px 24px rgba(0,0,0,.25);
+  animation:up .2s ease; max-width:520px; margin:0 auto;
+}
+#updBar span{flex:1; font-size:13.5px; font-weight:600}
+#updBar button{padding:8px 13px; border-radius:9px; font-size:13px; font-weight:600; flex:0 0 auto}
+#updBar .upd-yes{background:var(--acc); color:#fff}
+#updBar .upd-no{color:var(--fg2)}
+
 .switch{display:flex; align-items:center; justify-content:space-between; padding:13px 4px; gap:12px}
 .switch span{font-size:14.5px}
 .switch input{width:44px; height:26px; accent-color:var(--acc); flex:0 0 auto}

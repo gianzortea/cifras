@@ -1,6 +1,6 @@
 /* Service worker — stale-while-revalidate.
    Abre instantâneo do cache (funciona offline) e atualiza em segundo plano. */
-const CACHE = 'cifras-v8';
+const CACHE = 'cifras-v9';
 const ASSETS = [
   './',
   './index.html',
