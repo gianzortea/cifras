@@ -3,6 +3,11 @@
 Visualizador de cifras offline para tocar no celular. HTML + CSS + JS puros, sem
 dependências, sem build, sem internet.
 
+**No ar em: https://gianzortea.github.io/cifras/**
+
+Abra esse endereço no celular e use "Adicionar à tela de início" — a partir daí
+ele abre como app, em tela cheia, e funciona no modo avião.
+
 ## Como usar
 
 **No computador (testar):** abra `index.html` direto no navegador, ou rode um
@@ -12,10 +17,13 @@ servidor local:
 python -m http.server 8777
 ```
 
-**No celular (recomendado):** coloque a pasta em qualquer hospedagem estática
-(GitHub Pages, Netlify, Vercel — todos grátis), abra no Chrome/Safari e use
-"Adicionar à tela de início". Aí ele vira um app: abre em tela cheia, sem barra
-de navegador, e funciona 100% offline (service worker + localStorage).
+**No celular:** abra https://gianzortea.github.io/cifras/ e use "Adicionar à
+tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
+(service worker + localStorage).
+
+**Publicar uma nova versão:** `git push` — o GitHub Pages reconstrói sozinho em
+1 a 2 minutos. Ao mudar arquivos, suba também o número em `const CACHE` no
+`sw.js`, senão o cache antigo continua valendo.
 
 > Abrindo por `file://` também funciona, mas o service worker não é registrado e
 > o "adicionar à tela de início" não fica disponível.
