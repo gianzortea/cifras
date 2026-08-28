@@ -406,12 +406,22 @@ function viewSong(id, q){
   // fora do modo edição: toque no acorde mostra o desenho, toque na cifra vira modo palco
   $('#stage').addEventListener('click', (e) => {
     if(V.edit) return;
+    if(V.arrastou) return;                 // foi deslize de página, não toque
     const ch = e.target.closest('.ch');
     if(ch){ diagramSheet(ch.textContent); return; }
     toggleZen();
   });
 
+  // deslizar de lado troca de página; ao soltar, encaixa na página inteira
+  $('#stage').addEventListener('scroll', () => {
+    if(V.edit) return;
+    V.arrastou = true;
+    clearTimeout(V.snapT);
+    V.snapT = setTimeout(() => { encaixarNaPagina(); setTimeout(() => { V.arrastou = false; }, 120); }, 140);
+  });
+
   renderCifra();
+  enableEditGestures();
   if(s.audio) mountPlayer();
   requestWakeLock();
   window.addEventListener('resize', onResize);
@@ -449,6 +459,9 @@ function renderCifra(){
   if(v.classList.contains('fit')) autoFit();
   else {
     cif.style.columnCount = 1;
+    cif.style.columnWidth = '';
+    cif.style.columnFill = '';
+    cif.style.height = '';
     cif.style.fontSize = (V.song.fontSize || S.fontSize) + 'px';
   }
   if(V.edit) bindEditHandlers();
@@ -465,10 +478,43 @@ function stageBox(){
   };
 }
 
-function fitsAt(cif, H, W, fs, cols){
-  cif.style.columnCount = cols;
+const GAP = 22;
+
+/** Monta o layout em páginas e devolve quantas páginas ficaram.
+    Cada página é uma tela cheia; dentro dela cabem `cols` colunas. */
+function fitLayout(fs, cols){
+  const cif = $('#cifra'), box = stageBox();
+  const colW = Math.max(40, box.W / cols - GAP);
   cif.style.fontSize = fs + 'px';
-  return cif.scrollHeight <= H && cif.scrollWidth <= W;
+  cif.style.columnCount = '';
+  cif.style.columnWidth = colW + 'px';
+  cif.style.columnGap = GAP + 'px';
+  cif.style.columnRule = '1px solid var(--line)';
+  cif.style.columnFill = 'auto';
+  cif.style.height = box.H + 'px';
+  // conta pelas COLUNAS, não pela largura: a largura carrega um vão sobrando
+  // no fim e arredondava pra cima, inventando uma página a mais
+  const nCols = Math.max(1, Math.round((cif.scrollWidth + GAP) / (colW + GAP)));
+  return Math.max(1, Math.ceil(nCols / cols));
+}
+
+/** Largura de um caractere na fonte monoespaçada, para uma dada altura */
+function charWidthAt(fs){
+  const cif = $('#cifra'), m = $('#measure'), cs = getComputedStyle(cif);
+  m.style.fontFamily = cs.fontFamily;
+  m.style.fontWeight = '700';
+  m.style.fontSize = fs + 'px';
+  m.textContent = '0'.repeat(40);
+  return m.getBoundingClientRect().width / 40 || fs * 0.6;
+}
+
+/** Maior linha da música, em caracteres */
+function maiorLinha(){
+  return (V.song.lines || []).reduce((max, l) => {
+    const t = (l.text || '').length;
+    const c = (l.ch || []).reduce((a, x) => Math.max(a, x.p + String(x.c).length), 0);
+    return Math.max(max, t, c);
+  }, 1);
 }
 
 function autoFit(){
@@ -476,36 +522,80 @@ function autoFit(){
   if(!stage || !cif) return;
   const box = stageBox();
   const maxCols = window.innerWidth >= 700 ? 4 : 3;
-  cif.style.columnGap = '22px';
-  cif.style.columnRule = '1px solid var(--line)';
 
-  // 1) maior fonte que cabe de verdade, testando de 1 a maxCols colunas
+  // largura de uma linha inteira, para qualquer tamanho de fonte (monoespaçada = linear).
+  // Sem isso o layout aceita colunas estreitas demais e as linhas transbordam.
+  const razao = charWidthAt(100) / 100;
+  const chars = maiorLinha();
+  const linhaCabe = (fs, cols) => chars * fs * razao <= (box.W / cols - GAP) + 1;
+
+  // 1) maior fonte que cabe numa ÚNICA página (o "caber na tela" de sempre)
   let best = { fs: 0, cols: 1 };
   for(let cols = 1; cols <= maxCols; cols++){
     let lo = 5, hi = 52, ok = 0;
     for(let it = 0; it < 10; it++){
       const mid = (lo + hi) / 2;
-      if(fitsAt(cif, box.H, box.W, mid, cols)){ ok = mid; lo = mid; }
+      if(linhaCabe(mid, cols) && fitLayout(mid, cols) === 1){ ok = mid; lo = mid; }
       else hi = mid;
     }
     if(ok > best.fs + 0.15) best = { fs: ok, cols: cols };
   }
-  V.fitMax = best.fs || 5;
+  V.fitMax = best.fs || 6;
 
-  // 2) aplica o ajuste manual (A- / A+) por cima, sem sair do "cabe na tela"
-  const scale = Math.min(1, Math.max(0.3, V.song.fitScale || 1));
+  // 2) ajuste manual: abaixo de 1 continua numa página; acima de 1 vira páginas.
+  // Teto absoluto: a linha mais longa tem que caber na largura da tela, senão
+  // "caber na tela" deixaria de ser verdade e o texto sairia cortado.
+  const fsTeto = (box.W - GAP) / (chars * razao);
+  let scale = Math.max(0.3, Math.min(3, V.song.fitScale || 1));
+  if(V.fitMax * scale > fsTeto){
+    scale = fsTeto / V.fitMax;
+    V.song.fitScale = scale;          // trava o ajuste, não só a exibição
+  }
   const target = Math.max(5, V.fitMax * scale);
 
-  // com a fonte menor, usa a menor quantidade de colunas que ainda cabe
   let cols = best.cols || 1;
-  for(let c = 1; c <= maxCols; c++){
-    if(fitsAt(cif, box.H, box.W, target, c)){ cols = c; break; }
+  if(scale <= 1){
+    // menor número de colunas que ainda cabe: colunas mais largas, menos apertadas
+    for(let c = 1; c <= maxCols; c++){
+      if(linhaCabe(target, c) && fitLayout(target, c) === 1){ cols = c; break; }
+    }
+  } else {
+    // aumentando: quantas colunas ainda comportarem a linha mais longa
+    cols = 1;
+    for(let c = maxCols; c >= 1; c--){ if(linhaCabe(target, c)){ cols = c; break; } }
   }
 
-  cif.style.columnCount = cols;
-  cif.style.fontSize = target.toFixed(2) + 'px';
+  V.fitPages = fitLayout(target, cols);
   V.fitCols = cols;
   V.fitScaleApplied = scale;
+  if(V.fitPage > V.fitPages) V.fitPage = V.fitPages;
+  irParaPagina(V.fitPage || 1, false);
+  renderDock();
+}
+
+/* ---------- navegação por páginas ---------- */
+function irParaPagina(n, suave){
+  const stage = $('#stage');
+  if(!stage) return;
+  V.fitPage = Math.max(1, Math.min(V.fitPages || 1, n));
+  const alvo = (V.fitPage - 1) * stageBox().W;
+  if(Math.abs(stage.scrollLeft - alvo) > 2){
+    // trava o encaixe durante a animação, senão ele lê a posição no meio do
+    // caminho, conclui que é outra página e cancela a rolagem
+    V.scrollProg = true;
+    clearTimeout(V.progT);
+    V.progT = setTimeout(() => { V.scrollProg = false; }, 500);
+    stage.scrollTo({ left: alvo, behavior: suave === false ? 'auto' : 'smooth' });
+  }
+  renderDock();
+}
+
+function encaixarNaPagina(){
+  const v = $('#viewer'), stage = $('#stage');
+  if(!v || !stage || !v.classList.contains('fit')) return;
+  if(V.scrollProg) return;
+  const W = stageBox().W;
+  irParaPagina(Math.round(stage.scrollLeft / W) + 1);
 }
 
 function toggleFit(){
@@ -522,20 +612,24 @@ function toggleFit(){
 function bumpFont(d){
   const v = $('#viewer');
 
-  // no modo "caber na tela" o A-/A+ ajusta o tamanho SEM sair do modo:
-  // a fonte encolhe e as colunas são recalculadas pra continuar cabendo
+  // no modo "caber na tela" o A-/A+ ajusta o tamanho SEM sair do modo.
+  // Passando do que cabe numa tela, a música vira páginas que você desliza —
+  // nunca volta pra rolagem manual.
   if(v.classList.contains('fit')){
-    const cur = V.song.fitScale || 1;
-    let next = cur + d * 0.08;
-    if(next >= 1){
-      if(cur >= 1){ toast('Já é o maior tamanho que cabe na tela'); return; }
-      next = 1;
-    }
-    if(next < 0.3) next = 0.3;
-    V.song.fitScale = next;
+    const antes = V.song.fitScale || 1;
+    V.song.fitScale = Math.max(0.3, Math.min(3, antes + d * 0.08));
+    autoFit();                                   // pode travar no teto de largura
+    const depois = V.song.fitScale || 1;
     Store.upsertSong(V.song);
-    autoFit();
-    toast(Math.round(next * 100) + '% · ' + V.fitCols + (V.fitCols > 1 ? ' colunas' : ' coluna'));
+
+    if(Math.abs(depois - antes) < 0.005){
+      toast(d > 0 ? 'No máximo: a linha mais longa já ocupa a largura da tela'
+                  : 'No tamanho mínimo', 2600);
+      return;
+    }
+    const p = V.fitPages > 1 ? V.fitPages + ' páginas' :
+              (V.fitCols > 1 ? V.fitCols + ' colunas' : '1 tela');
+    toast(Math.round(depois * 100) + '% · ' + p);
     return;
   }
 
@@ -673,6 +767,29 @@ function renderDock(){
   const mid = $('#dockMid');
   if(!mid) return;
   const s = V.song;
+  const v = $('#viewer');
+
+  // em "caber na tela" a rolagem não se aplica; o que importa são as páginas
+  if(v && v.classList.contains('fit')){
+    const btn = $('#btnScroll'), cfg = $('#btnScrollCfg');
+    if(btn) btn.style.display = 'none';
+    if(cfg) cfg.style.display = 'none';
+    if((V.fitPages || 1) > 1){
+      mid.innerHTML =
+        '<button class="iconbtn" id="pgPrev">&#8249;</button>' +
+        '<span class="val" id="pgLbl" style="flex:1;text-align:center;width:auto;font-size:13px;font-weight:600">' +
+          (V.fitPage || 1) + ' / ' + V.fitPages + '</span>' +
+        '<button class="iconbtn" id="pgNext">&#8250;</button>';
+      $('#pgPrev').onclick = () => irParaPagina((V.fitPage || 1) - 1);
+      $('#pgNext').onclick = () => irParaPagina((V.fitPage || 1) + 1);
+    } else {
+      mid.innerHTML = '<span class="val" style="flex:1;text-align:center;width:auto">tela única</span>';
+    }
+    return;
+  }
+  const btn = $('#btnScroll'), cfg = $('#btnScrollCfg');
+  if(btn) btn.style.display = '';
+  if(cfg) cfg.style.display = '';
 
   if(s.scrollMode === 'duration'){
     mid.innerHTML = '<button class="tool" id="durBtn" style="width:100%;justify-content:center">&#9201; ' +
@@ -799,7 +916,8 @@ function toggleEdit(){
   $('#tEdit').classList.toggle('on', V.edit);
   if(V.edit){
     stopScroll();
-    if(v.classList.contains('fit')) toggleFit();
+    V.fitAntesDeEditar = v.classList.contains('fit');
+    if(V.fitAntesDeEditar) toggleFit();
     if(!$('#editbar')){
       const bar = document.createElement('div');
       bar.className = 'editbar'; bar.id = 'editbar';
@@ -811,7 +929,68 @@ function toggleEdit(){
     bindEditHandlers();
   } else {
     const bar = $('#editbar'); if(bar) bar.remove();
+    // devolve o "caber na tela" se era assim que a música estava antes de editar
+    if(V.fitAntesDeEditar && !v.classList.contains('fit')) toggleFit();
+    V.fitAntesDeEditar = false;
   }
+}
+
+/* ---------- gestos do modo edição: arrastar livre + pinça pra zoom ---------- */
+function enableEditGestures(){
+  const stage = $('#stage');
+  if(!stage) return;
+  const pts = new Map();
+  let modo = null, x0 = 0, y0 = 0, sl0 = 0, st0 = 0, d0 = 0, fs0 = 0, moveu = false, zoomou = false;
+
+  const dist = () => {
+    const a = Array.from(pts.values());
+    return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1;
+  };
+  const iniciarPan = (x, y) => { modo = 'pan'; x0 = x; y0 = y; sl0 = stage.scrollLeft; st0 = stage.scrollTop; };
+
+  stage.addEventListener('pointerdown', (e) => {
+    if(!V.edit) return;
+    if(e.target.closest('.ch')) return;            // acorde tem arrasto próprio
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    moveu = false;
+    if(pts.size === 1) iniciarPan(e.clientX, e.clientY);
+    else if(pts.size === 2){ modo = 'zoom'; d0 = dist(); fs0 = parseFloat(getComputedStyle($('#cifra')).fontSize); }
+    try{ stage.setPointerCapture(e.pointerId); }catch(err){}
+  });
+
+  stage.addEventListener('pointermove', (e) => {
+    if(!V.edit || !pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if(modo === 'pan' && pts.size === 1){
+      const dx = e.clientX - x0, dy = e.clientY - y0;
+      if(Math.abs(dx) > 4 || Math.abs(dy) > 4) moveu = true;
+      stage.scrollLeft = sl0 - dx;
+      stage.scrollTop  = st0 - dy;
+    } else if(modo === 'zoom' && pts.size === 2){
+      moveu = true;
+      const fs = Math.max(7, Math.min(72, fs0 * (dist() / d0)));
+      $('#cifra').style.fontSize = fs.toFixed(2) + 'px';
+      V.song.fontSize = Math.round(fs);
+    }
+  });
+
+  const fim = (e) => {
+    if(!pts.has(e.pointerId)) return;
+    if(modo === 'zoom') zoomou = true;   // ao soltar o 1º dedo o modo vira 'pan';
+    pts.delete(e.pointerId);             // sem essa marca o zoom nunca seria salvo
+    if(pts.size === 0){
+      if(zoomou){ Store.upsertSong(V.song); bindEditHandlers(); zoomou = false; }
+      modo = null;
+      V.arrastou = moveu;
+      setTimeout(() => { V.arrastou = false; }, 80);
+    } else if(pts.size === 1){
+      const p = Array.from(pts.values())[0];
+      iniciarPan(p.x, p.y);
+    }
+  };
+  stage.addEventListener('pointerup', fim);
+  stage.addEventListener('pointercancel', fim);
 }
 
 function charWidth(){
@@ -863,7 +1042,7 @@ function bindEditHandlers(){
 
   $$('#cifra .lyr').forEach(ly => {
     ly.onclick = (e) => {
-      if(!V.edit) return;
+      if(!V.edit || V.arrastou) return;
       const li = +ly.dataset.l;
       const r = ly.getBoundingClientRect();
       const p = Math.max(0, Math.round((e.clientX - r.left) / cw));

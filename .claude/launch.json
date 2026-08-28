@@ -1,6 +1,14 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "cifras", "runtimeExecutable": "python", "runtimeArgs": ["-m","http.server","8777"], "port": 8777 }
+    {
+      "name": "cifras",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "C:/Users/conta/AppData/Local/Temp/claude/C--Users-conta-OneDrive-Documentos-Projetos-Web-cifras/0df873a6-084a-4059-b67d-58d3f93d4d4e/scratchpad/devserver.py",
+        "8788"
+      ],
+      "port": 8788
+    }
   ]
 }

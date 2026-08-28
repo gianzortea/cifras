@@ -33,9 +33,9 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | | |
 |---|---|
 | **Cadastrar** | Cola o texto do Cifra Club (Ctrl+V). Título, artista, tom e capotraste são detectados; acordes ficam alinhados na posição certa. |
-| **Ajustar acordes** | Modo "Editar acordes": arraste pros lados, toque pra trocar, toque na letra pra inserir um novo. |
+| **Ajustar acordes** | Modo "Editar acordes": arraste pros lados, toque pra trocar, toque na letra pra inserir um novo. Nesse modo dá pra **dar zoom com dois dedos e arrastar a vista em qualquer direção**, para acertar posição com precisão. |
 | **Mudar o tom** | Botões ▲/▼ ou escolha direta entre os 12 tons. A grafia acompanha o tom (Bb em tom de Fá, A# em tom de Si). |
-| **Caber na tela** | Calcula sozinho a maior fonte que faz a música inteira caber, usando de 1 a 4 colunas. Zero scroll. O **A− / A+** ajusta o tamanho *sem sair do modo*: a fonte diminui e as colunas são recalculadas pra continuar cabendo (ao encolher bastante, 3 colunas viram 2, que ficam mais largas e menos apertadas). A+ para no maior tamanho que cabe. |
+| **Caber na tela** | Calcula sozinho a maior fonte que faz a música caber, usando de 1 a 4 colunas. O **A− / A+** ajusta o tamanho *sem nunca voltar pra rolagem manual*: diminuindo, as colunas são recalculadas; aumentando além do que cabe numa tela, a música vira **páginas** que você desliza de lado (‹ 1/3 › no rodapé). O teto é o ponto em que a linha mais longa ainda cabe na largura da tela. |
 | **Autoscroll** | Dois modos, salvos por música: **velocidade** (px/s) ou **duração** — você digita "3:40" e ele calcula o ritmo pra terminar junto com a música. Se houver áudio carregado, um botão preenche a duração dele. |
 | **Desenhos de acorde** | Toque em qualquer acorde da cifra e veja as posições no braço. Também dá pra ver todos os acordes da música de uma vez, pelo menu. |
 | **Áudio** | Um MP3/M4A de referência por música, guardado offline. Botão ↻ faz a rolagem começar junto com o play. |
@@ -130,6 +130,18 @@ evento, e a versão instalada aparece no rodapé (`Cifras v9`).
 
 ### Publicando uma nova versão
 
-`git push` — o Pages reconstrói em 1 a 2 minutos. **Suba o número em
-`const CACHE` no `sw.js`**: é ele que faz o service worker se ver como novo.
-Sem isso, nada muda no aparelho de ninguém.
+```bash
+python bump-version.py
+```
+
+Isso sobe o número em `sw.js` (`const CACHE`) e nas URLs dos scripts em
+`index.html` (`app.js?v=12`) de uma vez só — depois é `git push` e o Pages
+reconstrói em 1 a 2 minutos.
+
+Os dois lugares importam: o `CACHE` faz o service worker se ver como novo, e a
+query nas URLs impede o navegador de servir um `app.js` velho do próprio cache
+HTTP. Sem a query, dá pra passar horas caçando um bug que já estava corrigido no
+disco.
+
+Por isso a instalação do service worker busca os arquivos com `cache: 'reload'`:
+sem isso ele podia gravar no cache offline uma cópia velha vinda do cache HTTP.

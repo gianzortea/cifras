@@ -142,7 +142,20 @@ a{color:var(--acc); text-decoration:none}
   flex:1; overflow:auto; overflow-x:hidden; position:relative;
   -webkit-overflow-scrolling:touch; padding:10px 12px 45vh;
 }
-.viewer.fit .stage{overflow:hidden; padding:8px 10px}
+/* "caber na tela": rolagem horizontal = virar página; nunca rola na vertical */
+.viewer.fit .stage{
+  overflow-x:auto; overflow-y:hidden; padding:8px 10px;
+  scrollbar-width:none; overscroll-behavior-x:contain;
+}
+.viewer.fit .stage::-webkit-scrollbar{display:none}
+
+/* modo edição: zoom livre e arrasto em qualquer direção */
+.viewer.edit .stage{
+  overflow:auto; padding:10px 12px 40vh; touch-action:none;
+  scrollbar-width:none;
+}
+.viewer.edit .stage::-webkit-scrollbar{display:none}
+.viewer.edit .cifra{height:auto !important; column-width:auto !important; column-count:1 !important}
 
 .cifra{
   font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
