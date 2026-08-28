@@ -1,17 +1,17 @@
 /* Service worker — stale-while-revalidate.
    Abre instantâneo do cache (funciona offline) e atualiza em segundo plano. */
-const CACHE = 'cifras-v14';
+const CACHE = 'cifras-v16';
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './icon.svg',
-  './css/style.css?v=14',
-  './js/chords.js?v=14',
-  './js/parser.js?v=14',
-  './js/diagrams.js?v=14',
-  './js/store.js?v=14',
-  './js/app.js?v=14'
+  './css/style.css?v=16',
+  './js/chords.js?v=16',
+  './js/parser.js?v=16',
+  './js/diagrams.js?v=16',
+  './js/store.js?v=16',
+  './js/app.js?v=16'
 ];
 
 self.addEventListener('install', (e) => {

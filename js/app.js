@@ -483,6 +483,23 @@ function stageBox(){
 
 const GAP = 22;
 
+/** Layout de UMA tela: divide o conteúdo igualmente entre as colunas.
+    Devolve true se coube inteiro (altura e largura).
+    Precisa ser 'balance' com column-count: com column-width + fill:auto o
+    conteúdo enche a primeira coluna e as outras ficam vazias — foi o que fazia
+    "2 colunas" virar uma coluna espremida com meia tela em branco. */
+function layoutUmaTela(fs, cols){
+  const cif = $('#cifra'), box = stageBox();
+  cif.style.fontSize = fs + 'px';
+  cif.style.columnWidth = 'auto';
+  cif.style.columnCount = cols;
+  cif.style.columnFill = 'balance';
+  cif.style.columnGap = GAP + 'px';
+  cif.style.columnRule = '1px solid var(--line)';
+  cif.style.height = '';
+  return cif.scrollHeight <= box.H && cif.scrollWidth <= box.W;
+}
+
 /** Monta o layout em páginas e devolve quantas páginas ficaram.
     Cada página é uma tela cheia; dentro dela cabem `cols` colunas. */
 function fitLayout(fs, cols){
@@ -540,10 +557,21 @@ function ciclarColunas(){
 
   const b = $('#tCols');
   if(b) b.innerHTML = rotuloColunas(V.song);
+
+  // mostra o resultado junto com o do automático: fixar coluna quase sempre
+  // ENCOLHE a letra, e isso tem que ficar visível na hora da escolha
   const p = V.song.fitColsPref;
+  const agora = parseFloat($('#cifra').style.fontSize);
+  let comparacao = '';
+  if(p){
+    V.song.fitColsPref = 0; V.song.fitScale = null; autoFit();
+    const auto = parseFloat($('#cifra').style.fontSize);
+    V.song.fitColsPref = p; V.song.fitScale = null; autoFit();
+    if(Math.abs(auto - agora) > 0.5) comparacao = '  (automático: ' + auto.toFixed(0) + 'px)';
+  }
   toast((p ? p + (p > 1 ? ' colunas' : ' coluna') : 'colunas automáticas') +
-        ' · ' + parseFloat($('#cifra').style.fontSize).toFixed(0) + 'px' +
-        (V.fitPages > 1 ? ' · ' + V.fitPages + ' páginas' : ''), 2600);
+        ' · ' + agora.toFixed(0) + 'px' + comparacao +
+        (V.fitPages > 1 ? ' · ' + V.fitPages + ' páginas' : ''), 3200);
 }
 
 function autoFit(){
@@ -569,7 +597,7 @@ function autoFit(){
     let lo = 5, hi = 52, ok = 0;
     for(let it = 0; it < 10; it++){
       const mid = (lo + hi) / 2;
-      if(linhaCabe(mid, cols) && fitLayout(mid, cols) === 1){ ok = mid; lo = mid; }
+      if(linhaCabe(mid, cols) && layoutUmaTela(mid, cols)){ ok = mid; lo = mid; }
       else hi = mid;
     }
     if(ok > best.fs + 0.15) best = { fs: ok, cols: cols };
@@ -594,7 +622,7 @@ function autoFit(){
     if(scale <= 1){
       // menor número de colunas que ainda cabe: colunas mais largas, menos apertadas
       for(let c = 1; c <= maxCols; c++){
-        if(linhaCabe(target, c) && fitLayout(target, c) === 1){ cols = c; break; }
+        if(linhaCabe(target, c) && layoutUmaTela(target, c)){ cols = c; break; }
       }
     } else {
       // aumentando: quantas colunas ainda comportarem a linha mais longa
@@ -603,7 +631,7 @@ function autoFit(){
     }
   }
 
-  V.fitPages = fitLayout(target, cols);
+  V.fitPages = layoutUmaTela(target, cols) ? 1 : fitLayout(target, cols);
   V.fitCols = cols;
   V.fitScaleApplied = scale;
   if(V.fitPage > V.fitPages) V.fitPage = V.fitPages;
