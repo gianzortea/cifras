@@ -1,0 +1,8 @@
+# lixo de sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+
+# backups exportados do proprio app (dados pessoais, nao versionar)
+cifras-backup-*.json

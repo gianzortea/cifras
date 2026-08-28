@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#fbfbfd">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Cifras</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="app"></div>
+
+<!-- folha de medição pro auto-ajuste -->
+<span id="measure" aria-hidden="true"></span>
+
+<!-- inputs escondidos -->
+<input type="file" id="fileAudio" accept="audio/*" hidden>
+<input type="file" id="fileJson"  accept="application/json,.json" hidden>
+
+<!-- container de modais / toasts -->
+<div id="modal-root"></div>
+<div id="toast"></div>
+
+<script src="js/chords.js"></script>
+<script src="js/parser.js"></script>
+<script src="js/diagrams.js"></script>
+<script src="js/store.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
