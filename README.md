@@ -35,7 +35,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Cadastrar** | Cola o texto do Cifra Club (Ctrl+V). Título, artista, tom e capotraste são detectados; acordes ficam alinhados na posição certa. |
 | **Ajustar acordes** | Modo "Editar acordes": arraste pros lados, toque pra trocar, toque na letra pra inserir um novo. Nesse modo dá pra **dar zoom com dois dedos e arrastar a vista em qualquer direção**, para acertar posição com precisão. |
 | **Mudar o tom** | Botões ▲/▼ ou escolha direta entre os 12 tons. A grafia acompanha o tom (Bb em tom de Fá, A# em tom de Si). |
-| **Caber na tela** | Calcula sozinho a maior fonte que faz a música caber, usando de 1 a 4 colunas. O **A− / A+** ajusta o tamanho *sem nunca voltar pra rolagem manual*: diminuindo, as colunas são recalculadas; aumentando além do que cabe numa tela, a música vira **páginas** que você desliza de lado (‹ 1/3 › no rodapé). O teto é o ponto em que a linha mais longa ainda cabe na largura da tela. |
+| **Caber na tela** | Calcula sozinho a maior fonte que faz a música caber sem tocar na tela. **No máximo 2 colunas** numa tela — 3 colunas num celular deixam a coluna estreita demais pra uma linha de cifra. O botão de colunas fixa em 1 ou 2 quando você quiser. O **A− / A+** ajusta o tamanho; se passar do que cabe, aí sim vira página. |
 | **Autoscroll** | Dois modos, salvos por música: **velocidade** (px/s) ou **duração** — você digita "3:40" e ele calcula o ritmo pra terminar junto com a música. Se houver áudio carregado, um botão preenche a duração dele. |
 | **Desenhos de acorde** | Toque em qualquer acorde da cifra e veja as posições no braço. Também dá pra ver todos os acordes da música de uma vez, pelo menu. |
 | **Áudio** | Um MP3/M4A de referência por música, guardado offline. Botão ↻ faz a rolagem começar junto com o play. |
@@ -44,6 +44,22 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
 
 Tema **claro** por padrão; o escuro fica em Ajustes.
+
+### O que mais aumenta a fonte no "caber na tela"
+
+Não é coluna — é **espaçamento**. Numa música de 34 linhas com linha mais longa
+de 45 caracteres, num celular de 373px úteis:
+
+| espaçamento | fonte |
+|---|---|
+| normal | 11,0px |
+| **compacto** (padrão) | **12,7px** |
+| mínimo | 13,5px |
+
+Coluna funciona ao contrário do que parece: forçar 2 colunas nessa mesma música
+dá **6,6px**, quase metade. Cada coluna vira 164px e uma linha de 45 caracteres
+só cabe ali com fonte minúscula. Duas colunas só compensam em música **longa com
+linhas curtas** — e nesse caso o modo automático já escolhe sozinho.
 
 ## Estrutura
 

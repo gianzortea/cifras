@@ -33,6 +33,8 @@ const DEFAULT_SETTINGS = {
   scrollSpeed: 26,
   keepAwake: true,
   showChords: true,
+  spacing: 'compacto',   // normal | compacto | minimo
+
   notation: 'en'   // 'en' = C D E | 'pt' = Dó Ré Mi (só exibição do tom)
 };
 
@@ -93,6 +95,7 @@ function newSong(partial){
     fontSize: null,
     fitMode: null,
     fitScale: null,     // 1 = maior tamanho que cabe; menor = usuário diminuiu
+    fitColsPref: 0,     // 0 = automático; 1 ou 2 = fixado pelo usuário
     notes: '',
     tags: [],
     audio: null,        // {name, type, size}

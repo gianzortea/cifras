@@ -21,6 +21,7 @@ function toast(msg, ms){
 }
 function applyTheme(){
   document.documentElement.dataset.theme = S.theme;
+  document.documentElement.dataset.esp = S.spacing || 'compacto';
   const m = document.querySelector('meta[name=theme-color]');
   if(m) m.content = S.theme === 'light' ? '#fbfbfd' : '#0f1115';
 }
@@ -360,6 +361,7 @@ function viewSong(id, q){
           (s.transpose ? ' <small>' + (s.transpose > 0 ? '+' : '') + s.transpose + '</small>' : '') + '</button>' +
         '<button class="tool" id="tPlus">&#9650; Tom</button>' +
         '<button class="tool' + (fit ? ' on' : '') + '" id="tFit">&#9635; Caber na tela</button>' +
+        '<button class="tool" id="tCols">' + rotuloColunas(s) + '</button>' +
         '<button class="tool" id="tFsMinus">A&minus;</button>' +
         '<button class="tool" id="tFsPlus">A+</button>' +
         '<button class="tool" id="tEdit">&#9998; Editar acordes</button>' +
@@ -388,6 +390,7 @@ function viewSong(id, q){
   $('#tPlus').onclick  = () => setTranspose((V.song.transpose||0) + 1);
   $('#tKey').onclick   = () => keySheet();
   $('#tFit').onclick   = () => toggleFit();
+  $('#tCols').onclick  = () => ciclarColunas();
   $('#tFsMinus').onclick = () => bumpFont(-1);
   $('#tFsPlus').onclick  = () => bumpFont(1);
   $('#tEdit').onclick  = () => toggleEdit();
@@ -517,11 +520,39 @@ function maiorLinha(){
   }, 1);
 }
 
+/** Rótulo do botão de colunas: auto / 1 col / 2 col */
+function rotuloColunas(s){
+  const p = s.fitColsPref || 0;
+  return '&#9707; ' + (p ? p + (p > 1 ? ' colunas' : ' coluna') : 'colunas auto');
+}
+
+/** Alterna auto -> 1 -> 2 -> auto. Fixar em 2 é sempre possível. */
+function ciclarColunas(){
+  const max = window.innerWidth >= 700 ? 3 : 2;
+  const atual = V.song.fitColsPref || 0;
+  V.song.fitColsPref = atual === 0 ? 1 : (atual >= max ? 0 : atual + 1);
+  V.song.fitScale = null;                 // recomeça do maior tamanho que cabe
+  Store.upsertSong(V.song);
+
+  const v = $('#viewer');
+  if(v && !v.classList.contains('fit')) toggleFit();   // faz sentido só no "caber na tela"
+  else autoFit();
+
+  const b = $('#tCols');
+  if(b) b.innerHTML = rotuloColunas(V.song);
+  const p = V.song.fitColsPref;
+  toast((p ? p + (p > 1 ? ' colunas' : ' coluna') : 'colunas automáticas') +
+        ' · ' + parseFloat($('#cifra').style.fontSize).toFixed(0) + 'px' +
+        (V.fitPages > 1 ? ' · ' + V.fitPages + ' páginas' : ''), 2600);
+}
+
 function autoFit(){
   const stage = $('#stage'), cif = $('#cifra');
   if(!stage || !cif) return;
   const box = stageBox();
-  const maxCols = window.innerWidth >= 700 ? 4 : 3;
+  // Nunca 3 colunas numa tela de celular: coluna estreita demais não comporta
+  // uma linha de cifra. O que passar de 2 colunas vira página.
+  const maxCols = window.innerWidth >= 700 ? 3 : 2;
 
   // largura de uma linha inteira, para qualquer tamanho de fonte (monoespaçada = linear).
   // Sem isso o layout aceita colunas estreitas demais e as linhas transbordam.
@@ -529,9 +560,12 @@ function autoFit(){
   const chars = maiorLinha();
   const linhaCabe = (fs, cols) => chars * fs * razao <= (box.W / cols - GAP) + 1;
 
-  // 1) maior fonte que cabe numa ÚNICA página (o "caber na tela" de sempre)
+  // 1) maior fonte que cabe numa ÚNICA página.
+  // Se o usuário fixou a quantidade de colunas, respeita a escolha dele.
+  const pref = V.song.fitColsPref || 0;
   let best = { fs: 0, cols: 1 };
   for(let cols = 1; cols <= maxCols; cols++){
+    if(pref && cols !== pref) continue;
     let lo = 5, hi = 52, ok = 0;
     for(let it = 0; it < 10; it++){
       const mid = (lo + hi) / 2;
@@ -540,12 +574,14 @@ function autoFit(){
     }
     if(ok > best.fs + 0.15) best = { fs: ok, cols: cols };
   }
+  if(!best.fs && pref) best = { fs: 6, cols: pref };
   V.fitMax = best.fs || 6;
 
   // 2) ajuste manual: abaixo de 1 continua numa página; acima de 1 vira páginas.
   // Teto absoluto: a linha mais longa tem que caber na largura da tela, senão
   // "caber na tela" deixaria de ser verdade e o texto sairia cortado.
-  const fsTeto = (box.W - GAP) / (chars * razao);
+  const colsTeto = pref || 1;
+  const fsTeto = (box.W / colsTeto - GAP) / (chars * razao);
   let scale = Math.max(0.3, Math.min(3, V.song.fitScale || 1));
   if(V.fitMax * scale > fsTeto){
     scale = fsTeto / V.fitMax;
@@ -553,16 +589,18 @@ function autoFit(){
   }
   const target = Math.max(5, V.fitMax * scale);
 
-  let cols = best.cols || 1;
-  if(scale <= 1){
-    // menor número de colunas que ainda cabe: colunas mais largas, menos apertadas
-    for(let c = 1; c <= maxCols; c++){
-      if(linhaCabe(target, c) && fitLayout(target, c) === 1){ cols = c; break; }
+  let cols = pref || best.cols || 1;
+  if(!pref){
+    if(scale <= 1){
+      // menor número de colunas que ainda cabe: colunas mais largas, menos apertadas
+      for(let c = 1; c <= maxCols; c++){
+        if(linhaCabe(target, c) && fitLayout(target, c) === 1){ cols = c; break; }
+      }
+    } else {
+      // aumentando: quantas colunas ainda comportarem a linha mais longa
+      cols = 1;
+      for(let c = maxCols; c >= 1; c--){ if(linhaCabe(target, c)){ cols = c; break; } }
     }
-  } else {
-    // aumentando: quantas colunas ainda comportarem a linha mais longa
-    cols = 1;
-    for(let c = maxCols; c >= 1; c--){ if(linhaCabe(target, c)){ cols = c; break; } }
   }
 
   V.fitPages = fitLayout(target, cols);
@@ -1532,7 +1570,14 @@ function viewSettings(){
       '<div class="switch"><span>Tema claro</span><input type="checkbox" id="cfgTheme"' + (S.theme==='light'?' checked':'') + '></div>' +
       '<div class="switch"><span>Manter tela ligada tocando</span><input type="checkbox" id="cfgWake"' + (S.keepAwake?' checked':'') + '></div>' +
       '<div class="switch"><span>Abrir cifras em "caber na tela"</span><input type="checkbox" id="cfgFit"' + (S.fitMode?' checked':'') + '></div>' +
-      '<div class="field" style="margin-top:14px"><label>Tamanho de letra padrão: <span id="fsv">' + S.fontSize + 'px</span></label>' +
+      '<div class="field" style="margin-top:14px"><label>Espaçamento entre as linhas</label>' +
+        '<select id="cfgEsp">' +
+          '<option value="normal">Normal — mais respiro</option>' +
+          '<option value="compacto">Compacto — cabe mais na tela</option>' +
+          '<option value="minimo">Mínimo — fonte maior possível</option>' +
+        '</select>' +
+        '<div class="hint">Quanto mais apertado, maior a fonte que cabe numa tela só.</div></div>' +
+      '<div class="field"><label>Tamanho de letra padrão: <span id="fsv">' + S.fontSize + 'px</span></label>' +
         '<input type="range" id="cfgFs" min="10" max="34" value="' + S.fontSize + '" style="padding:0"></div>' +
       '<div class="field"><label>Velocidade padrão da rolagem: <span id="spv">' + S.scrollSpeed + '</span></label>' +
         '<input type="range" id="cfgSpd" min="0" max="100" value="' + S.scrollSpeed + '" style="padding:0"></div>' +
@@ -1566,6 +1611,8 @@ function viewSettings(){
   $('#cfgTheme').onchange = e => { S.theme = e.target.checked ? 'light' : 'dark'; Store.saveSettings(S); applyTheme(); };
   $('#cfgWake').onchange  = e => { S.keepAwake = e.target.checked; Store.saveSettings(S); };
   $('#cfgFit').onchange   = e => { S.fitMode = e.target.checked; Store.saveSettings(S); };
+  $('#cfgEsp').value = S.spacing || 'compacto';
+  $('#cfgEsp').onchange = e => { S.spacing = e.target.value; Store.saveSettings(S); applyTheme(); };
   $('#cfgFs').oninput     = e => { S.fontSize = +e.target.value; $('#fsv').textContent = S.fontSize + 'px'; Store.saveSettings(S); };
   $('#cfgSpd').oninput    = e => { S.scrollSpeed = +e.target.value; $('#spv').textContent = S.scrollSpeed; Store.saveSettings(S); };
 

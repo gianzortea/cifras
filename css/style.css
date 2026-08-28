@@ -169,6 +169,20 @@ a{color:var(--acc); text-decoration:none}
 .cifra .tab{color:var(--fg2)}
 .cifra .chrow{position:relative; height:1.32em; color:var(--chord); font-weight:700}
 .cifra .lyr{min-height:1.32em}
+
+/* Espaçamento: apertar as linhas é o que mais rende no "caber na tela" —
+   menos altura gasta = fonte maior com a música inteira numa tela só. */
+html[data-esp="compacto"] .cifra{line-height:1.22}
+html[data-esp="compacto"] .cifra .chrow{height:1.06em}
+html[data-esp="compacto"] .cifra .lyr{min-height:1.22em}
+html[data-esp="compacto"] .cifra .ln.blank{height:.5em}
+html[data-esp="compacto"] .cifra .sec{margin:.35em 0 .05em}
+
+html[data-esp="minimo"] .cifra{line-height:1.14}
+html[data-esp="minimo"] .cifra .chrow{height:1em}
+html[data-esp="minimo"] .cifra .lyr{min-height:1.14em}
+html[data-esp="minimo"] .cifra .ln.blank{height:.35em}
+html[data-esp="minimo"] .cifra .sec{margin:.25em 0 0}
 .cifra .ch{position:absolute; top:0; white-space:pre; will-change:left}
 .viewer.nochords .chrow{visibility:hidden; height:0}
 
