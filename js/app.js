@@ -1343,6 +1343,9 @@ function eventMenu(ev){
    ========================================================= */
 function viewSettings(){
   const nSongs = Store.songs().length, nEv = Store.events().length;
+  const comAudio = Store.songs().filter(s => s.audio);
+  const nAudio = comAudio.length;
+  const audioBytes = comAudio.reduce((a, s) => a + (s.audio.size || 0), 0);
   APP.innerHTML =
     '<header class="topbar"><div class="ttl"><b>Ajustes</b>' +
       '<small>' + nSongs + (nSongs===1?' música':' músicas') + ' · ' + nEv + (nEv===1?' evento':' eventos') + '</small></div></header>' +
@@ -1357,10 +1360,16 @@ function viewSettings(){
 
       '<div class="sep" style="margin:20px 0"></div>' +
       '<h3 style="font-size:15px;margin:0 0 10px">Backup</h3>' +
-      '<button class="btn" id="expJson" style="margin-bottom:9px">&#8681; Exportar tudo (.json)</button>' +
-      '<button class="btn" id="expFull" style="margin-bottom:9px">&#8681; Exportar com áudios (arquivo grande)</button>' +
+      '<button class="btn" id="expJson" style="margin-bottom:9px">&#8681; Exportar cifras (.json)</button>' +
+      '<button class="btn" id="expFull"' + (nAudio ? '' : ' disabled') +
+        ' style="margin-bottom:9px' + (nAudio ? '' : ';opacity:.45') + '">' +
+        '&#8681; Exportar com áudios' +
+        (nAudio ? ' <small style="opacity:.7;font-weight:500">~' + humanSize(Math.round(audioBytes * 1.34)) + '</small>'
+                : ' <small style="opacity:.7;font-weight:500">nenhum áudio</small>') + '</button>' +
       '<button class="btn" id="impJson" style="margin-bottom:9px">&#8679; Importar backup</button>' +
-      '<div class="hint">O JSON guarda músicas, eventos e ajustes. Use pra passar de um celular pro outro.</div>' +
+      '<div class="hint">O JSON guarda cifras, eventos e ajustes — leve, dá pra mandar por WhatsApp. ' +
+        'Os <b>áudios não vão junto</b> nesse arquivo: pra levá-los, use a segunda opção, ' +
+        'que embute os arquivos e fica bem maior.</div>' +
 
       '<div class="sep" style="margin:20px 0"></div>' +
       '<button class="btn danger" id="wipe">Apagar tudo</button>' +
@@ -1455,7 +1464,6 @@ async function applyImport(data, replace){
     ne.songs = (ne.songs || []).map(x => idMap[x] || x).filter(x => songs.some(s => s.id === x));
     if(!events.some(x => x.id === ne.id)) events.push(ne);
   }
-  Store.saveSongs(songs);
   Store.saveEvents(events);
 
   if(data.audios){
@@ -1464,7 +1472,16 @@ async function applyImport(data, replace){
       try{ await Audio_DB.put(nid, await dataURLToBlob(data.audios[oldId])); }catch(e){}
     }
   }
-  toast('Importado!');
+
+  // backup exportado sem os áudios: não deixa a música fingir que tem um.
+  // (checa o arquivo de verdade, então reimportar no mesmo aparelho preserva)
+  let semArquivo = 0;
+  for(const s of songs){
+    if(s.audio && !(await Audio_DB.get(s.id))){ s.audio = null; semArquivo++; }
+  }
+  Store.saveSongs(songs);
+
+  if(semArquivo) toast(semArquivo + ' música(s) sem o áudio — o backup era o sem áudio', 3500);
   go('#/'); render();
 }
 

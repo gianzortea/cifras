@@ -40,7 +40,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Desenhos de acorde** | Toque em qualquer acorde da cifra e veja as posições no braço. Também dá pra ver todos os acordes da música de uma vez, pelo menu. |
 | **Áudio** | Um MP3/M4A de referência por música, guardado offline. Botão ↻ faz a rolagem começar junto com o play. |
 | **Eventos** | Setlists ordenadas: reordene **arrastando pela alça ≡** ou pelos botões ▲▼. Dentro da cifra aparecem ‹ › pra pular pra próxima. |
-| **Backup** | Exporta/importa tudo em JSON (com ou sem os áudios). |
+| **Backup** | Dois JSONs: **Exportar cifras** (leve, sem os áudios) e **Exportar com áudios** (embute os arquivos em base64, ~34% maior que a soma dos MP3 — o tamanho estimado aparece no botão). Importar oferece mesclar ou substituir. |
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
 
 Tema **claro** por padrão; o escuro fica em Ajustes.
@@ -58,6 +58,22 @@ js/app.js           rotas, telas e o visualizador
 sw.js               cache offline
 manifest.json       instalação como app
 ```
+
+## Backup e áudio
+
+`Exportar cifras (.json)` leva cifras, eventos e ajustes — alguns KB, dá pra
+mandar por WhatsApp. **Os arquivos de áudio não vão nesse JSON**, só o nome
+deles.
+
+`Exportar com áudios` embute cada MP3 dentro do próprio JSON, codificado em
+base64. Isso infla ~34%: 120 KB de áudio viram ~161 KB de arquivo. Com um
+repertório grande, o arquivo passa fácil de centenas de MB — por isso o botão
+mostra o tamanho estimado antes, e fica desativado quando não há nenhum áudio.
+
+Na importação, quem manda é o arquivo que existe de verdade: se o backup veio
+sem os áudios, a música deixa de anunciar que tem um (nada de ♫ mentiroso na
+lista). Reimportar o backup leve **no mesmo aparelho** preserva os áudios que já
+estavam ali, porque a checagem é feita no arquivo e não no rótulo.
 
 ## Onde os dados ficam
 
