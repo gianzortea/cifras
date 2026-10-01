@@ -99,6 +99,8 @@ function newSong(partial){
     notes: '',
     tags: [],
     audio: null,        // {name, type, size}
+    audioStart: 0,      // segundos: onde a reprodução começa (pula silêncio do início)
+    audioEnd: 0,        // segundos: onde termina; 0 = até o fim do arquivo
     createdAt: Date.now(),
     updatedAt: Date.now()
   }, partial || {});

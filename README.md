@@ -38,10 +38,11 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Caber na tela** | Calcula sozinho a maior fonte que faz a música caber sem tocar na tela. **No máximo 2 colunas** numa tela — 3 colunas num celular deixam a coluna estreita demais pra uma linha de cifra. O botão de colunas fixa em 1 ou 2 quando você quiser. O **A− / A+** ajusta o tamanho; se passar do que cabe, aí sim vira página. |
 | **Autoscroll** | Dois modos, salvos por música: **velocidade** (px/s) ou **duração** — você digita "3:40" e ele calcula o ritmo pra terminar junto com a música. Se houver áudio carregado, um botão preenche a duração dele. |
 | **Desenhos de acorde** | Toque em qualquer acorde da cifra e veja as posições no braço. Também dá pra ver todos os acordes da música de uma vez, pelo menu. |
-| **Áudio** | Um MP3/M4A de referência por música, guardado offline. Botão ↻ faz a rolagem começar junto com o play. |
+| **Áudio** | Um MP3/M4A de referência por música, guardado offline. Botão ↻ faz a rolagem começar junto com o play. **Recorte**: defina onde começa e onde termina (ex.: pular 10s de silêncio) — tocando, pause no ponto e toque em *◉ aqui*, ou digite `10`, `0:10`, `1:05.5`. O player mostra só o trecho, e a rolagem por duração usa o tamanho do trecho. |
 | **Eventos** | Setlists ordenadas: reordene **arrastando pela alça ≡** ou pelos botões ▲▼. Dentro da cifra aparecem ‹ › pra pular pra próxima. |
 | **Backup** | Dois JSONs: **Exportar cifras** (leve, sem os áudios) e **Exportar com áudios** (embute os arquivos em base64, ~34% maior que a soma dos MP3 — o tamanho estimado aparece no botão). Importar oferece mesclar ou substituir. |
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
+| **Zoom** | Pinça com dois dedos em **qualquer modo**, inclusive *caber na tela* (no computador: Ctrl + roda ou pinça no trackpad). É uma lupa: amplia sem refazer o layout, então voltar ao 100% (no botão `150% ✕`) deixa tudo exatamente como estava. |
 
 Tema **claro** por padrão; o escuro fica em Ajustes.
 

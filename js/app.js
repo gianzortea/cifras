@@ -314,6 +314,7 @@ const V = {
   edit: false, zen: false,
   scrolling: false, raf: null, lastTs: 0, acc: 0, pps: 0, limit: Infinity,
   audioEl: null, audioURL: null, followAudio: false,
+  zoom: 1,
   wake: null
 };
 
@@ -335,7 +336,7 @@ function toStored(txt, s){
 function viewSong(id, q){
   const s = Store.getSong(id);
   if(!s){ go('#/'); return; }
-  V.song = s; V.edit = false; V.zen = false;
+  V.song = s; V.edit = false; V.zen = false; V.zoom = 1;
 
   V.ev = q.ev ? Store.getEvent(q.ev) : null;
   V.evIndex = V.ev ? (V.ev.songs || []).indexOf(id) : -1;
@@ -425,6 +426,7 @@ function viewSong(id, q){
 
   renderCifra();
   enableEditGestures();
+  enableViewZoom();
   if(s.audio) mountPlayer();
   requestWakeLock();
   window.addEventListener('resize', onResize);
@@ -577,6 +579,9 @@ function ciclarColunas(){
 function autoFit(){
   const stage = $('#stage'), cif = $('#cifra');
   if(!stage || !cif) return;
+  // mede sempre em 100%: o zoom é uma lupa por cima do layout, não muda a conta
+  const zSalvo = V.zoom || 1;
+  if(zSalvo !== 1) cif.style.zoom = '';
   const box = stageBox();
   // Nunca 3 colunas numa tela de celular: coluna estreita demais não comporta
   // uma linha de cifra. O que passar de 2 colunas vira página.
@@ -635,7 +640,8 @@ function autoFit(){
   V.fitCols = cols;
   V.fitScaleApplied = scale;
   if(V.fitPage > V.fitPages) V.fitPage = V.fitPages;
-  irParaPagina(V.fitPage || 1, false);
+  if(zSalvo !== 1) cif.style.zoom = zSalvo;
+  else irParaPagina(V.fitPage || 1, false);
   renderDock();
 }
 
@@ -660,11 +666,13 @@ function encaixarNaPagina(){
   const v = $('#viewer'), stage = $('#stage');
   if(!v || !stage || !v.classList.contains('fit')) return;
   if(V.scrollProg) return;
+  if((V.zoom || 1) !== 1) return;          // ampliado: o deslize é pra olhar, não pra virar página
   const W = stageBox().W;
   irParaPagina(Math.round(stage.scrollLeft / W) + 1);
 }
 
 function toggleFit(){
+  if((V.zoom || 1) !== 1) resetZoom();
   const v = $('#viewer');
   const on = !v.classList.contains('fit');
   v.classList.toggle('fit', on);
@@ -775,7 +783,8 @@ function fmtDur(sec){
 function scrollTarget(){
   const stage = $('#stage'), cif = $('#cifra');
   if(!stage || !cif) return 0;
-  const fim = cif.offsetTop + cif.offsetHeight + 16;
+  // retângulo visível (já considera o zoom); offsetHeight não considera
+  const fim = cif.getBoundingClientRect().bottom - stage.getBoundingClientRect().top + stage.scrollTop + 16;
   return Math.max(0, Math.min(fim - stage.clientHeight, stage.scrollHeight - stage.clientHeight));
 }
 
@@ -877,8 +886,9 @@ function renderDock(){
 
 function scrollSheet(){
   const s = V.song;
+  // duração do TRECHO que toca (com o recorte), não do arquivo inteiro
   const audioDur = (V.audioEl && isFinite(V.audioEl.duration) && V.audioEl.duration > 0)
-    ? V.audioEl.duration : 0;
+    ? trechoAudio().len : 0;
 
   sheet('<h3>Rolagem automática</h3>' +
     '<div class="row" style="margin-bottom:16px">' +
@@ -982,6 +992,7 @@ function toggleEdit(){
   $('#tEdit').classList.toggle('on', V.edit);
   if(V.edit){
     stopScroll();
+    if((V.zoom || 1) !== 1) resetZoom();      // a edição tem o zoom dela (por fonte)
     V.fitAntesDeEditar = v.classList.contains('fit');
     if(V.fitAntesDeEditar) toggleFit();
     if(!$('#editbar')){
@@ -999,6 +1010,105 @@ function toggleEdit(){
     if(V.fitAntesDeEditar && !v.classList.contains('fit')) toggleFit();
     V.fitAntesDeEditar = false;
   }
+}
+
+/* ---------- zoom de visualização (qualquer modo, inclusive "caber na tela") ----------
+   É uma lupa: amplia o que está na tela sem refazer o layout. Por isso não
+   bagunça o "caber na tela" — soltou no 100%, volta exatamente como estava. */
+const ZOOM_MIN = 0.5, ZOOM_MAX = 4;
+
+function aplicarZoom(z, cx, cy){
+  const stage = $('#stage'), cif = $('#cifra'), v = $('#viewer');
+  if(!stage || !cif || !v) return;
+  z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+  if(Math.abs(z - 1) < 0.04) z = 1;               // encaixa no 100%
+  const z0 = V.zoom || 1;
+
+  // mantém parado o ponto que está entre os dedos
+  const r = stage.getBoundingClientRect(), cs = getComputedStyle(stage);
+  const padL = parseFloat(cs.paddingLeft), padT = parseFloat(cs.paddingTop);
+  const ax = (cx == null ? r.left + r.width / 2 : cx) - r.left;
+  const ay = (cy == null ? r.top + r.height / 3 : cy) - r.top;
+  const px = (stage.scrollLeft + ax - padL) / z0;
+  const py = (stage.scrollTop  + ay - padT) / z0;
+
+  V.zoom = z;
+  v.classList.toggle('zoomed', z !== 1);
+  cif.style.zoom = z === 1 ? '' : String(z);
+  stage.scrollLeft = px * z + padL - ax;
+  stage.scrollTop  = py * z + padT - ay;
+  atualizarChipZoom();
+}
+
+/** Arremates depois que o gesto termina */
+function aposZoom(){
+  const v = $('#viewer'), stage = $('#stage');
+  if(!v || !stage) return;
+  if((V.zoom || 1) === 1 && v.classList.contains('fit')){
+    stage.scrollTop = 0;
+    irParaPagina(Math.round(stage.scrollLeft / stageBox().W) + 1, false);
+  }
+  if(V.scrolling){
+    V.pps = scrollPxPerSec();
+    if(V.song.scrollMode === 'duration') V.limit = scrollTarget();
+  }
+}
+
+function resetZoom(){ aplicarZoom(1); aposZoom(); }
+
+function atualizarChipZoom(){
+  let c = $('#zoomChip');
+  const z = V.zoom || 1;
+  if(z === 1){ if(c) c.remove(); return; }
+  if(!c){
+    c = document.createElement('button');
+    c.id = 'zoomChip';
+    c.className = 'zoomchip';
+    c.onclick = (e) => { e.stopPropagation(); resetZoom(); };
+    $('#viewer').appendChild(c);
+  }
+  c.innerHTML = Math.round(z * 100) + '% &nbsp;&#10005;';
+}
+
+function enableViewZoom(){
+  const stage = $('#stage');
+  if(!stage) return;
+  let pinca = null;
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1;
+  const meio = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+
+  // toque: dois dedos = zoom; um dedo continua rolando/virando página normalmente
+  stage.addEventListener('touchstart', (e) => {
+    if(V.edit || e.touches.length !== 2) return;
+    e.preventDefault();
+    pinca = { d0: dist(e.touches), z0: V.zoom || 1 };
+  }, { passive: false });
+
+  stage.addEventListener('touchmove', (e) => {
+    if(V.edit || !pinca || e.touches.length !== 2) return;
+    if(e.cancelable) e.preventDefault();
+    const m = meio(e.touches);
+    aplicarZoom(pinca.z0 * dist(e.touches) / pinca.d0, m.x, m.y);
+  }, { passive: false });
+
+  const fim = (e) => {
+    if(!pinca || e.touches.length >= 2) return;
+    pinca = null;
+    V.arrastou = true;                         // não deixa o soltar virar "toque" (modo palco)
+    setTimeout(() => { V.arrastou = false; }, 350);
+    aposZoom();
+  };
+  stage.addEventListener('touchend', fim);
+  stage.addEventListener('touchcancel', fim);
+
+  // computador: pinça no trackpad e Ctrl + roda chegam como 'wheel' com ctrlKey
+  stage.addEventListener('wheel', (e) => {
+    if(V.edit || !e.ctrlKey) return;
+    e.preventDefault();
+    aplicarZoom((V.zoom || 1) * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+    clearTimeout(V.wheelT);
+    V.wheelT = setTimeout(aposZoom, 200);
+  }, { passive: false });
 }
 
 /* ---------- gestos do modo edição: arrastar livre + pinça pra zoom ---------- */
@@ -1168,15 +1278,83 @@ function chordSheet(li, ci, isNew){
 }
 
 /* ---------- áudio ---------- */
+
+/** "10", "0:10", "1:05.5", "1,5" -> segundos. Vazio -> 0. Inválido -> NaN */
+function parseTempo(str){
+  const t = String(str == null ? '' : str).trim().replace(',', '.');
+  if(!t) return 0;
+  const partes = t.split(':');
+  if(partes.length > 3) return NaN;
+  let seg = 0;
+  for(const x of partes){
+    if(x === '' || isNaN(+x) || +x < 0) return NaN;
+    seg = seg * 60 + parseFloat(x);
+  }
+  return seg;
+}
+
+/** segundos -> "0:10" ou "1:05.5" (décimo só quando existe) */
+function fmtTempo(sec){
+  sec = Math.round(Math.max(0, +sec || 0) * 10) / 10;
+  const m = Math.floor(sec / 60);
+  const r = Math.round((sec - m * 60) * 10) / 10;
+  const ss = Number.isInteger(r) ? String(r).padStart(2, '0') : r.toFixed(1).padStart(4, '0');
+  return m + ':' + ss;
+}
+
+/** Trecho que realmente toca, em segundos do arquivo: {ini, fim, dur, len} */
+function trechoAudio(){
+  const a = V.audioEl, s = V.song || {};
+  const dur = a && isFinite(a.duration) ? a.duration : 0;
+  let ini = Math.max(0, +s.audioStart || 0);
+  let fim = +s.audioEnd > 0 ? +s.audioEnd : (dur || Infinity);
+  if(dur){ fim = Math.min(fim, dur); ini = Math.min(ini, dur); }
+  if(fim <= ini){ ini = 0; fim = dur || Infinity; }      // recorte inválido: toca tudo
+  return { ini: ini, fim: fim, dur: dur, len: isFinite(fim) ? fim - ini : 0 };
+}
+
 function audioSheet(){
   const s = V.song;
+  const temAudio = !!(s.audio && V.audioEl);
+
   sheet('<h3>Áudio de referência</h3>' +
     (s.audio
       ? '<div class="card" style="margin:0 0 14px"><div class="info"><b>' + esc(s.audio.name) + '</b>' +
-        '<small>' + humanSize(s.audio.size) + '</small></div></div>'
+        '<small>' + humanSize(s.audio.size) + ' · <span id="tTotal">—</span></small></div></div>'
       : '<p style="color:var(--fg2)">Nenhum áudio. Escolha um MP3/M4A do celular — fica salvo offline.</p>') +
-    '<button class="btn primary" id="aPick" style="margin-bottom:9px">' + (s.audio ? 'Trocar áudio' : 'Escolher áudio') + '</button>' +
+
+    (temAudio
+      ? '<div class="trim">' +
+          '<div class="trim-head"><b>Recorte</b><small id="tLen"></small></div>' +
+          '<div class="trim-row"><label for="tIni">Começa em</label>' +
+            '<input id="tIni" inputmode="decimal" autocomplete="off" placeholder="0:00" value="' +
+              (s.audioStart > 0 ? fmtTempo(s.audioStart) : '') + '">' +
+            '<button class="tool" id="tIniAqui">&#9673; aqui</button></div>' +
+          '<div class="trim-row"><label for="tFim">Termina em</label>' +
+            '<input id="tFim" inputmode="decimal" autocomplete="off" placeholder="fim" value="' +
+              (s.audioEnd > 0 ? fmtTempo(s.audioEnd) : '') + '">' +
+            '<button class="tool" id="tFimAqui">&#9673; aqui</button></div>' +
+          '<div class="trim-prev">' +
+            '<button class="iconbtn" id="tPlay">&#9654;</button>' +
+            '<span class="trim-now" id="tNow">0:00</span>' +
+            '<button class="tool" id="tBack">&minus;1s</button>' +
+            '<button class="tool" id="tFwd">+1s</button>' +
+          '</div>' +
+          '<div class="row" style="margin-bottom:6px">' +
+            '<button class="tool" id="tTestIni" style="justify-content:center">&#9655; testar início</button>' +
+            '<button class="tool" id="tTestFim" style="justify-content:center">&#9655; testar fim</button>' +
+          '</div>' +
+          '<div class="trim-err" id="tErr"></div>' +
+          '<div class="hint">Toque &#9654;, pause no ponto certo e use <b>&#9673; aqui</b>. ' +
+            'Ou digite: <b>10</b>, <b>0:10</b>, <b>1:05.5</b>. Fim em branco = até o final.</div>' +
+        '</div>'
+      : '') +
+
+    (temAudio ? '<button class="btn primary" id="aOk" style="margin-bottom:9px">Pronto</button>' : '') +
+    '<button class="btn' + (temAudio ? '' : ' primary') + '" id="aPick" style="margin-bottom:9px">' +
+      (s.audio ? 'Trocar áudio' : 'Escolher áudio') + '</button>' +
     (s.audio ? '<button class="btn danger" id="aDel">Remover áudio</button>' : ''),
+
     (el) => {
       $('#aPick', el).onclick = () => {
         const f = $('#fileAudio');
@@ -1187,18 +1365,89 @@ function audioSheet(){
           if(file.size > 25 * 1024 * 1024 && !confirm('Arquivo de ' + humanSize(file.size) + '. Continuar?')) return;
           await Audio_DB.put(s.id, file);
           s.audio = { name: file.name, type: file.type, size: file.size };
+          s.audioStart = 0; s.audioEnd = 0;              // recorte era do arquivo antigo
           Store.upsertSong(s);
-          closeSheet(); mountPlayer(); toast('Áudio salvo');
+          await mountPlayer();
+          toast('Áudio salvo — ajuste o início e o fim se precisar');
+          audioSheet();                                  // já abre no recorte
         };
         f.click();
       };
       const d = $('#aDel', el);
       if(d) d.onclick = async () => {
+        if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }
         await Audio_DB.del(s.id);
-        s.audio = null; Store.upsertSong(s);
+        s.audio = null; s.audioStart = 0; s.audioEnd = 0;
+        Store.upsertSong(s);
         const p = $('#playerSlot'); if(p) p.innerHTML = '';
+        V.audioEl = null;
         closeSheet(); toast('Áudio removido');
       };
+      if(!temAudio) return;
+
+      const a = V.audioEl;
+      const iIni = $('#tIni', el), iFim = $('#tFim', el), err = $('#tErr', el);
+      $('#aOk', el).onclick = () => { if(aplicar()) closeSheet(); };
+
+      // grava assim que o valor fica válido — como os outros ajustes do app
+      function aplicar(){
+        const ini = parseTempo(iIni.value), fim = parseTempo(iFim.value);
+        const dur = isFinite(a.duration) ? a.duration : 0;
+        let msg = '', ruimIni = false, ruimFim = false;
+        if(isNaN(ini)){ ruimIni = true; msg = 'Use segundos (10) ou minutos:segundos (0:10).'; }
+        if(isNaN(fim)){ ruimFim = true; msg = 'Use segundos (10) ou minutos:segundos (0:10).'; }
+        if(!msg && dur && ini >= dur){ ruimIni = true; msg = 'O áudio tem só ' + fmtTempo(dur) + '.'; }
+        if(!msg && dur && fim > dur + 0.05){ ruimFim = true; msg = 'O áudio tem só ' + fmtTempo(dur) + ' — deixe o fim em branco pra ir até o final.'; }
+        if(!msg && fim > 0 && fim <= ini + 0.3){ ruimIni = ruimFim = true; msg = 'O fim precisa vir depois do início.'; }
+        err.textContent = msg;
+        iIni.classList.toggle('bad', ruimIni);
+        iFim.classList.toggle('bad', ruimFim);
+        if(msg) return false;
+        s.audioStart = Math.round(ini * 10) / 10;
+        s.audioEnd = fim > 0 ? Math.round(fim * 10) / 10 : 0;
+        Store.upsertSong(s);
+        if(V.audioPintar) V.audioPintar();
+        pintar();
+        return true;
+      }
+      iIni.oninput = aplicar;
+      iFim.oninput = aplicar;
+      iIni.onblur = () => { if(aplicar() && iIni.value) iIni.value = fmtTempo(s.audioStart); };
+      iFim.onblur = () => { if(aplicar() && iFim.value) iFim.value = fmtTempo(s.audioEnd); };
+
+      $('#tIniAqui', el).onclick = () => { iIni.value = fmtTempo(a.currentTime); aplicar(); };
+      $('#tFimAqui', el).onclick = () => { iFim.value = fmtTempo(a.currentTime); aplicar(); };
+
+      // prévia: passeia pelo arquivo INTEIRO (pra achar o ponto), sem mexer na rolagem;
+      // os botões de teste, ao contrário, respeitam o recorte
+      $('#tPlay', el).onclick = () => { V.audioLivre = true; if(a.paused) a.play(); else a.pause(); };
+      $('#tBack', el).onclick = () => { a.currentTime = Math.max(0, a.currentTime - 1); pintar(); };
+      $('#tFwd', el).onclick  = () => { a.currentTime = Math.min(a.duration || 1e9, a.currentTime + 1); pintar(); };
+      $('#tTestIni', el).onclick = () => { V.audioLivre = false; a.currentTime = trechoAudio().ini; a.play(); };
+      $('#tTestFim', el).onclick = () => {
+        const t = trechoAudio();
+        V.audioLivre = false;
+        a.currentTime = Math.max(t.ini, t.fim - 4);       // 4s antes do corte
+        a.play();
+      };
+
+      function pintar(){
+        const t = trechoAudio();
+        $('#tNow', el).textContent = fmtTempo(a.currentTime);
+        $('#tPlay', el).innerHTML = a.paused ? '&#9654;' : '&#9208;';
+        $('#tTotal', el).textContent = t.dur ? 'duração ' + fmtTempo(t.dur) : '—';
+        iFim.placeholder = t.dur ? 'fim (' + fmtTempo(t.dur) + ')' : 'fim';
+        $('#tLen', el).textContent = t.dur ? 'toca ' + fmtTempo(t.len) : '';
+      }
+      pintar();
+      const relogio = setInterval(() => {
+        if(!document.body.contains(el)){                 // folha fechou
+          clearInterval(relogio);
+          V.audioLivre = false;
+          return;
+        }
+        pintar();
+      }, 100);
     });
 }
 
@@ -1208,6 +1457,7 @@ async function mountPlayer(){
   if(!slot || !s.audio) return;
   const blob = await Audio_DB.get(s.id);
   if(!blob){ slot.innerHTML = ''; return; }
+  if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }   // trocou o arquivo: cala o antigo
   if(V.audioURL) URL.revokeObjectURL(V.audioURL);
   V.audioURL = URL.createObjectURL(blob);
 
@@ -1221,27 +1471,61 @@ async function mountPlayer(){
     '</div>';
 
   const a = new Audio(V.audioURL);
+  a.preload = 'auto';
   V.audioEl = a;
+  V.audioLivre = false;
   const play = $('#aPlay'), seek = $('#aSeek'), cur = $('#aCur'), dur = $('#aDur');
-  const fmt = (t) => (isFinite(t) ? Math.floor(t/60) + ':' + String(Math.floor(t%60)).padStart(2,'0') : '0:00');
 
-  a.onloadedmetadata = () => { dur.textContent = fmt(a.duration); };
-  a.ontimeupdate = () => {
-    if(a.duration) seek.value = Math.round((a.currentTime / a.duration) * 1000);
-    cur.textContent = fmt(a.currentTime);
+  // o player mostra o TRECHO: começa em 0:00 mesmo que o arquivo comece no 0:10
+  const pintar = () => {
+    if(!document.body.contains(play)) return;
+    const t = trechoAudio();
+    const rel = Math.max(0, a.currentTime - t.ini);
+    if(t.len > 0) seek.value = Math.round(Math.min(1, rel / t.len) * 1000);
+    cur.textContent = fmtDur(Math.min(rel, t.len || rel));
+    dur.textContent = fmtDur(t.len);
   };
-  a.onended = () => { play.innerHTML = '&#9654;'; play.classList.remove('on'); if(V.followAudio) stopScroll(); };
+  V.audioPintar = pintar;
+
+  const terminar = () => {
+    a.pause();
+    a.currentTime = trechoAudio().ini;
+    if(V.followAudio) stopScroll();
+    pintar();
+  };
+
+  // timeupdate só chega a cada ~250ms; pra cortar no segundo certo, vigia mais de perto
+  let vigia = null;
+  const vigiar = () => {
+    clearInterval(vigia);
+    vigia = setInterval(() => {
+      if(a.paused || V.audioEl !== a){ clearInterval(vigia); return; }
+      if(!V.audioLivre && a.currentTime >= trechoAudio().fim - 0.03) terminar();
+    }, 40);
+  };
+
+  a.onloadedmetadata = () => { a.currentTime = trechoAudio().ini; pintar(); };
+  a.ontimeupdate = pintar;
+  a.onplay  = () => { play.innerHTML = '&#9208;'; play.classList.add('on'); vigiar(); };
+  a.onpause = () => { play.innerHTML = '&#9654;'; play.classList.remove('on'); pintar(); };
+  a.onended = () => { V.audioLivre = false; terminar(); };
 
   play.onclick = () => {
     if(a.paused){
-      a.play(); play.innerHTML = '&#9208;'; play.classList.add('on');
+      V.audioLivre = false;
+      const t = trechoAudio();
+      if(a.currentTime < t.ini - 0.05 || a.currentTime >= t.fim - 0.05) a.currentTime = t.ini;
+      a.play();
       if(V.followAudio && !V.scrolling) startScroll();
     } else {
-      a.pause(); play.innerHTML = '&#9654;'; play.classList.remove('on');
+      a.pause();
       if(V.followAudio) stopScroll();
     }
   };
-  seek.oninput = () => { if(a.duration) a.currentTime = (seek.value/1000) * a.duration; };
+  seek.oninput = () => {
+    const t = trechoAudio();
+    if(t.len > 0) a.currentTime = t.ini + (seek.value / 1000) * t.len;
+  };
   $('#aSync').onclick = () => {
     V.followAudio = !V.followAudio;
     $('#aSync').classList.toggle('on', V.followAudio);
@@ -1751,6 +2035,11 @@ async function applyImport(data, replace){
 /* =========================================================
    BOOT
    ========================================================= */
+// Safari (iPhone) ignora o maximum-scale do viewport e daria zoom na página
+// inteira por cima do nosso. Com a cifra aberta, a pinça é só nossa.
+['gesturestart', 'gesturechange'].forEach(ev =>
+  document.addEventListener(ev, (e) => { if($('#viewer')) e.preventDefault(); }, { passive: false }));
+
 applyTheme();
 render();
 
