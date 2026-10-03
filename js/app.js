@@ -142,7 +142,7 @@ function songCard(s){
   const k = keyOf(s);
   return '<div class="card" data-song="' + s.id + '">' +
     '<div class="info"><b>' + esc(s.title) + '</b>' +
-    '<small>' + esc(s.artist || '—') + (s.audio ? ' &nbsp;&#9835;' : '') + '</small></div>' +
+    '<small>' + esc(s.artist || '—') + ((s.tracks && s.tracks.length) ? ' &nbsp;&#9835;' + (s.tracks.length > 1 ? s.tracks.length : '') : '') + '</small></div>' +
     (k ? '<span class="badge key">' + esc(k) + '</span>' : '') +
     '<button class="iconbtn" data-more="' + s.id + '" style="width:32px;height:32px;font-size:15px">&#8942;</button>' +
   '</div>';
@@ -174,7 +174,7 @@ function songMenu(id){
       $('[data-a=edit]', el).onclick = () => { closeSheet(); go('#/edit/' + id); };
       $('[data-a=dup]',  el).onclick = () => {
         const c = JSON.parse(JSON.stringify(s));
-        c.id = uid(); c.title = s.title + ' (cópia)'; c.audio = null;
+        c.id = uid(); c.title = s.title + ' (cópia)'; c.tracks = []; c.trackAtiva = null;
         Store.upsertSong(c); closeSheet(); render(); toast('Duplicada');
       };
       $('[data-a=txt]',  el).onclick = () => {
@@ -429,7 +429,7 @@ function viewSong(id, q){
   renderCifra();
   enableEditGestures();
   enableViewZoom();
-  if(s.audio) mountPlayer();
+  if(faixaAtiva(s)) mountPlayer();
   requestWakeLock();
   window.addEventListener('resize', onResize);
 }
@@ -1307,12 +1307,12 @@ function fmtTempo(sec){
 
 /** Trecho que realmente toca, em segundos do arquivo: {ini, fim, dur, len} */
 function trechoAudio(){
-  const a = V.audioEl, s = V.song || {};
+  const a = V.audioEl, fx = faixaAtiva(V.song) || {};
   // gravação em WebM sai sem a duração no arquivo: vale a que o app mediu ao gravar
   const dur = a && isFinite(a.duration) && a.duration > 0 ? a.duration
-            : (s.audio && +s.audio.dur > 0 ? +s.audio.dur : 0);
-  let ini = Math.max(0, +s.audioStart || 0);
-  let fim = +s.audioEnd > 0 ? +s.audioEnd : (dur || Infinity);
+            : (+fx.dur > 0 ? +fx.dur : 0);
+  let ini = Math.max(0, +fx.start || 0);
+  let fim = +fx.end > 0 ? +fx.end : (dur || Infinity);
   if(dur){ fim = Math.min(fim, dur); ini = Math.min(ini, dur); }
   if(fim <= ini){ ini = 0; fim = dur || Infinity; }      // recorte inválido: toca tudo
   return { ini: ini, fim: fim, dur: dur, len: isFinite(fim) ? fim - ini : 0 };
@@ -1339,14 +1339,8 @@ function pedirGravacao(){
                  : 'Gravar exige HTTPS — abra pelo endereço do GitHub Pages', 3800);
     return;
   }
-  if(s.audio){
-    confirmSheet('Gravar por cima?',
-      'A gravação vai substituir "' + s.audio.name + '". O áudio atual só é trocado quando você parar e salvar.',
-      'Gravar', iniciarGravacao);
-  } else {
-    closeSheet();
-    iniciarGravacao();
-  }
+  closeSheet();
+  iniciarGravacao();          // vira uma faixa nova: nada é substituído
 }
 
 async function iniciarGravacao(){
@@ -1451,7 +1445,7 @@ async function finalizarGravacao(g){
   }
   const restaurarPlayer = async () => {
     if(!naTela()) return;
-    if(V.song.audio) await mountPlayer();
+    if(faixaAtiva(V.song)) await mountPlayer();
     else { $('#playerSlot').innerHTML = ''; ajustarAposPlayer(); }
   };
 
@@ -1459,17 +1453,19 @@ async function finalizarGravacao(g){
   if(g.descartar){ await restaurarPlayer(); toast('Gravação descartada'); return; }
   if(!blob.size || g.dur < 0.5){ await restaurarPlayer(); toast('Gravação curta demais — nada foi salvo'); return; }
 
-  await Audio_DB.put(g.songId, blob);
   const s = naTela() ? V.song : Store.getSong(g.songId);
   if(!s) return;
   const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
-  s.audio = {
+  const fx = {
+    id: uid(),
     name: 'Gravação ' + p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + ' ' + p2(d.getHours()) + 'h' + p2(d.getMinutes()),
     type: blob.type, size: blob.size,
     dur: Math.round(g.dur * 10) / 10,      // medida pelo app: WebM gravado não traz a duração
-    gravado: true
+    gravado: true, start: 0, end: 0
   };
-  s.audioStart = 0; s.audioEnd = 0;
+  await Audio_DB.put(fx.id, blob);         // o arquivo fica sob o id da faixa
+  s.tracks.push(fx);
+  s.trackAtiva = fx.id;                    // a faixa recém-gravada já fica selecionada
   Store.upsertSong(s);
 
   if(naTela()){
@@ -1490,24 +1486,40 @@ function ajustarAposPlayer(){
 function audioSheet(){
   const s = V.song;
   if(V.grav){ toast('Gravando — pare a gravação primeiro'); return; }
-  const temAudio = !!(s.audio && V.audioEl);
+  const fx = faixaAtiva(s);
+  const temAudio = !!(fx && V.audioEl);            // faixa selecionada e arquivo carregado
+  const totalBytes = s.tracks.reduce((a, t) => a + (t.size || 0), 0);
 
-  sheet('<h3>Áudio de referência</h3>' +
-    (s.audio
-      ? '<div class="card" style="margin:0 0 14px"><div class="info"><b>' + esc(s.audio.name) + '</b>' +
-        '<small>' + humanSize(s.audio.size) + ' · <span id="tTotal">—</span></small></div></div>'
-      : '<p style="color:var(--fg2)">Nenhum áudio. Grave agora pelo microfone ou escolha um MP3/M4A do celular — fica salvo offline.</p>') +
+  const lista = s.tracks.length
+    ? '<div class="fxlist">' + s.tracks.map(t =>
+        '<button class="fxrow' + (fx && t.id === fx.id ? ' on' : '') + '" data-fx="' + t.id + '">' +
+          '<i>' + (fx && t.id === fx.id ? '&#9679;' : '&#9675;') + '</i>' +
+          '<span class="fxname">' + esc(t.name) + '</span>' +
+          '<small>' + (t.dur ? fmtDur(t.dur) : humanSize(t.size)) + '</small>' +
+        '</button>').join('') + '</div>'
+    : '<p style="color:var(--fg2)">Nenhum áudio ainda. Grave pelo microfone ou escolha um MP3/M4A do celular — ' +
+      'fica salvo offline. Dá pra ter várias faixas por música (original, sua gravação, playback...).</p>';
+
+  sheet('<h3>Áudios da música</h3>' + lista +
+
+    (fx && !temAudio
+      ? '<p class="hint" style="margin:0 0 12px">O arquivo desta faixa não está neste aparelho ' +
+        '(veio de um backup sem áudios). Remova a faixa ou adicione o arquivo de novo.</p>'
+      : '') +
 
     (temAudio
       ? '<div class="trim">' +
-          '<div class="trim-head"><b>Recorte</b><small id="tLen"></small></div>' +
+          '<div class="trim-head"><b>Faixa selecionada</b><small id="tTotal"></small></div>' +
+          '<div class="trim-row"><label for="fxNome">Nome</label>' +
+            '<input id="fxNome" autocomplete="off" style="font-family:inherit" value="' + esc(fx.name) + '"></div>' +
+          '<div class="trim-head" style="margin-top:12px"><b>Recorte</b><small id="tLen"></small></div>' +
           '<div class="trim-row"><label for="tIni">Começa em</label>' +
             '<input id="tIni" inputmode="decimal" autocomplete="off" placeholder="0:00" value="' +
-              (s.audioStart > 0 ? fmtTempo(s.audioStart) : '') + '">' +
+              (fx.start > 0 ? fmtTempo(fx.start) : '') + '">' +
             '<button class="tool" id="tIniAqui">&#9673; aqui</button></div>' +
           '<div class="trim-row"><label for="tFim">Termina em</label>' +
             '<input id="tFim" inputmode="decimal" autocomplete="off" placeholder="fim" value="' +
-              (s.audioEnd > 0 ? fmtTempo(s.audioEnd) : '') + '">' +
+              (fx.end > 0 ? fmtTempo(fx.end) : '') + '">' +
             '<button class="tool" id="tFimAqui">&#9673; aqui</button></div>' +
           '<div class="trim-prev">' +
             '<button class="iconbtn" id="tPlay">&#9654;</button>' +
@@ -1521,19 +1533,31 @@ function audioSheet(){
           '</div>' +
           '<div class="trim-err" id="tErr"></div>' +
           '<div class="hint">Toque &#9654;, pause no ponto certo e use <b>&#9673; aqui</b>. ' +
-            'Ou digite: <b>10</b>, <b>0:10</b>, <b>1:05.5</b>. Fim em branco = até o final.</div>' +
+            'Ou digite: <b>10</b>, <b>0:10</b>, <b>1:05.5</b>. Fim em branco = até o final. ' +
+            'Cada faixa tem o seu recorte.</div>' +
         '</div>'
       : '') +
 
     (temAudio ? '<button class="btn primary" id="aOk" style="margin-bottom:9px">Pronto</button>' : '') +
     '<div class="row" style="margin-bottom:9px">' +
-      '<button class="btn' + (temAudio ? '' : ' primary') + '" id="aRec">&#9679; ' +
-        (s.audio ? 'Gravar de novo' : 'Gravar agora') + '</button>' +
-      '<button class="btn" id="aPick">' + (s.audio ? 'Trocar arquivo' : 'Escolher arquivo') + '</button>' +
+      '<button class="btn' + (s.tracks.length ? '' : ' primary') + '" id="aRec">&#9679; Gravar faixa</button>' +
+      '<button class="btn" id="aPick">+ Adicionar arquivo</button>' +
     '</div>' +
-    (s.audio ? '<button class="btn danger" id="aDel">Remover áudio</button>' : ''),
+    (fx ? '<button class="btn danger" id="aDel">Remover esta faixa</button>' : '') +
+    (s.tracks.length > 1
+      ? '<div class="hint" style="text-align:center;margin-top:10px">' + s.tracks.length + ' faixas · ' +
+        humanSize(totalBytes) + ' neste aparelho</div>' : ''),
 
     (el) => {
+      // trocar de faixa: carrega o arquivo dela e reabre a folha já com o recorte dela
+      $$('[data-fx]', el).forEach(b => b.onclick = async () => {
+        if(fx && b.dataset.fx === fx.id) return;
+        s.trackAtiva = b.dataset.fx;
+        Store.upsertSong(s);
+        await mountPlayer();
+        audioSheet();
+      });
+
       $('#aRec', el).onclick = () => pedirGravacao();
       $('#aPick', el).onclick = () => {
         const f = $('#fileAudio');
@@ -1542,28 +1566,44 @@ function audioSheet(){
           const file = f.files[0];
           if(!file) return;
           if(file.size > 25 * 1024 * 1024 && !confirm('Arquivo de ' + humanSize(file.size) + '. Continuar?')) return;
-          await Audio_DB.put(s.id, file);
-          s.audio = { name: file.name, type: file.type, size: file.size };
-          s.audioStart = 0; s.audioEnd = 0;              // recorte era do arquivo antigo
+          const nova = { id: uid(), name: file.name.replace(/\.[a-z0-9]{2,5}$/i, ''), type: file.type,
+                         size: file.size, dur: 0, gravado: false, start: 0, end: 0 };
+          await Audio_DB.put(nova.id, file);             // o arquivo fica sob o id da faixa
+          s.tracks.push(nova);
+          s.trackAtiva = nova.id;
           Store.upsertSong(s);
           await mountPlayer();
-          toast('Áudio salvo — ajuste o início e o fim se precisar');
-          audioSheet();                                  // já abre no recorte
+          toast('Faixa adicionada — ajuste o início e o fim se precisar');
+          audioSheet();                                  // já abre no recorte da faixa nova
         };
         f.click();
       };
       const d = $('#aDel', el);
-      if(d) d.onclick = async () => {
-        if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }
-        await Audio_DB.del(s.id);
-        s.audio = null; s.audioStart = 0; s.audioEnd = 0;
-        Store.upsertSong(s);
-        const p = $('#playerSlot'); if(p) p.innerHTML = '';
-        V.audioEl = null;
-        ajustarAposPlayer();
-        closeSheet(); toast('Áudio removido');
-      };
+      if(d) d.onclick = () => confirmSheet('Remover faixa?',
+        '"' + fx.name + '" será apagada deste aparelho. As outras faixas ficam.', 'Remover', async () => {
+          if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }
+          await Audio_DB.del(fx.id);
+          s.tracks = s.tracks.filter(t => t.id !== fx.id);
+          s.trackAtiva = s.tracks.length ? s.tracks[0].id : null;
+          Store.upsertSong(s);
+          V.audioEl = null;
+          if(faixaAtiva(s)) await mountPlayer();
+          else { const p = $('#playerSlot'); if(p) p.innerHTML = ''; ajustarAposPlayer(); }
+          toast('Faixa removida');
+          if(s.tracks.length) audioSheet();
+        });
       if(!temAudio) return;
+
+      // renomear: vale na hora, na lista e no botão do player
+      const iNome = $('#fxNome', el);
+      iNome.oninput = () => {
+        const n = iNome.value.trim();
+        if(!n) return;
+        fx.name = n;
+        Store.upsertSong(s);
+        const linha = $('.fxrow.on .fxname', el); if(linha) linha.textContent = n;
+        const bt = $('#aFx'); if(bt) bt.textContent = '♫ ' + n;
+      };
 
       const a = V.audioEl;
       const iIni = $('#tIni', el), iFim = $('#tFim', el), err = $('#tErr', el);
@@ -1572,7 +1612,7 @@ function audioSheet(){
       // grava assim que o valor fica válido — como os outros ajustes do app
       function aplicar(){
         const ini = parseTempo(iIni.value), fim = parseTempo(iFim.value);
-        const dur = isFinite(a.duration) ? a.duration : 0;
+        const dur = trechoAudio().dur;
         let msg = '', ruimIni = false, ruimFim = false;
         if(isNaN(ini)){ ruimIni = true; msg = 'Use segundos (10) ou minutos:segundos (0:10).'; }
         if(isNaN(fim)){ ruimFim = true; msg = 'Use segundos (10) ou minutos:segundos (0:10).'; }
@@ -1583,8 +1623,8 @@ function audioSheet(){
         iIni.classList.toggle('bad', ruimIni);
         iFim.classList.toggle('bad', ruimFim);
         if(msg) return false;
-        s.audioStart = Math.round(ini * 10) / 10;
-        s.audioEnd = fim > 0 ? Math.round(fim * 10) / 10 : 0;
+        fx.start = Math.round(ini * 10) / 10;
+        fx.end = fim > 0 ? Math.round(fim * 10) / 10 : 0;
         Store.upsertSong(s);
         if(V.audioPintar) V.audioPintar();
         pintar();
@@ -1592,8 +1632,8 @@ function audioSheet(){
       }
       iIni.oninput = aplicar;
       iFim.oninput = aplicar;
-      iIni.onblur = () => { if(aplicar() && iIni.value) iIni.value = fmtTempo(s.audioStart); };
-      iFim.onblur = () => { if(aplicar() && iFim.value) iFim.value = fmtTempo(s.audioEnd); };
+      iIni.onblur = () => { if(aplicar() && iIni.value) iIni.value = fmtTempo(fx.start); };
+      iFim.onblur = () => { if(aplicar() && iFim.value) iFim.value = fmtTempo(fx.end); };
 
       $('#tIniAqui', el).onclick = () => { iIni.value = fmtTempo(a.currentTime); aplicar(); };
       $('#tFimAqui', el).onclick = () => { iFim.value = fmtTempo(a.currentTime); aplicar(); };
@@ -1634,16 +1674,22 @@ function audioSheet(){
 async function mountPlayer(){
   const s = V.song;
   const slot = $('#playerSlot');
-  if(!slot || !s.audio) return;
-  const blob = await Audio_DB.get(s.id);
-  if(!blob){ slot.innerHTML = ''; return; }
-  if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }   // trocou o arquivo: cala o antigo
-  if(V.audioURL) URL.revokeObjectURL(V.audioURL);
+  const fx = faixaAtiva(s);
+  if(!slot || !fx) return;
+  const vez = V.mountSeq = (V.mountSeq || 0) + 1;
+  const blob = await Audio_DB.get(fx.id);
+  // trocaram de faixa (ou de música) enquanto o arquivo carregava: vale só o pedido mais novo
+  if(vez !== V.mountSeq || V.song !== s || !$('#playerSlot')) return;
+  if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }   // trocou a faixa: cala a anterior
+  if(V.audioURL){ URL.revokeObjectURL(V.audioURL); V.audioURL = null; }
+  if(!blob){ slot.innerHTML = ''; V.audioEl = null; ajustarAposPlayer(); return; }
   V.audioURL = URL.createObjectURL(blob);
 
   slot.innerHTML =
     '<div class="player">' +
       '<button class="iconbtn" id="aPlay">&#9654;</button>' +
+      // com mais de uma faixa, o nome da que está tocando vira o botão de troca
+      (s.tracks.length > 1 ? '<button class="tool fxbtn" id="aFx">&#9835; ' + esc(fx.name) + '</button>' : '') +
       '<span class="t" id="aCur">0:00</span>' +
       '<input type="range" id="aSeek" min="0" max="1000" value="0">' +
       '<span class="t" id="aDur">0:00</span>' +
@@ -1687,12 +1733,18 @@ async function mountPlayer(){
   // WebM gravado pelo navegador abre com duration = Infinity. Pedir uma posição
   // absurda obriga o navegador a varrer o arquivo e descobrir a duração de verdade.
   let consertando = false;
+  const anotarDuracao = () => {              // a lista de faixas mostra a duração de cada uma
+    if(!isFinite(a.duration) || a.duration <= 0) return;
+    const d = Math.round(a.duration * 10) / 10;
+    if(Math.abs((+fx.dur || 0) - d) > 0.05){ fx.dur = d; Store.upsertSong(s); }
+  };
   a.onloadedmetadata = () => {
-    if(isFinite(a.duration)){ a.currentTime = trechoAudio().ini; pintar(); return; }
+    if(isFinite(a.duration)){ anotarDuracao(); a.currentTime = trechoAudio().ini; pintar(); return; }
     consertando = true;
     const pronto = () => {
       if(!consertando) return;
       consertando = false;
+      anotarDuracao();
       a.currentTime = trechoAudio().ini;
       pintar();
     };
@@ -1721,6 +1773,9 @@ async function mountPlayer(){
     const t = trechoAudio();
     if(t.len > 0) a.currentTime = t.ini + (seek.value / 1000) * t.len;
   };
+  const bFx = $('#aFx');
+  if(bFx) bFx.onclick = () => audioSheet();
+  $('#aSync').classList.toggle('on', !!V.followAudio);
   $('#aSync').onclick = () => {
     V.followAudio = !V.followAudio;
     $('#aSync').classList.toggle('on', V.followAudio);
@@ -2068,9 +2123,9 @@ function eventMenu(ev){
    ========================================================= */
 function viewSettings(){
   const nSongs = Store.songs().length, nEv = Store.events().length;
-  const comAudio = Store.songs().filter(s => s.audio);
-  const nAudio = comAudio.length;
-  const audioBytes = comAudio.reduce((a, s) => a + (s.audio.size || 0), 0);
+  const todasFaixas = Store.songs().reduce((l, s) => l.concat(s.tracks || []), []);
+  const nAudio = todasFaixas.length;
+  const audioBytes = todasFaixas.reduce((a, t) => a + (t.size || 0), 0);
   APP.innerHTML =
     '<header class="topbar"><div class="ttl"><b>Ajustes</b>' +
       '<small>' + nSongs + (nSongs===1?' música':' músicas') + ' · ' + nEv + (nEv===1?' evento':' eventos') + '</small></div></header>' +
@@ -2145,9 +2200,10 @@ async function doExport(withAudio){
   if(withAudio){
     toast('Preparando áudios...');
     for(const s of data.songs){
-      if(!s.audio) continue;
-      const b = await Audio_DB.get(s.id);
-      if(b) data.audios[s.id] = await blobToDataURL(b);
+      for(const t of (s.tracks || [])){
+        const b = await Audio_DB.get(t.id);
+        if(b) data.audios[t.id] = await blobToDataURL(b);
+      }
     }
   }
   const name = 'cifras-backup-' + new Date().toISOString().slice(0,10) + (withAudio ? '-com-audio' : '') + '.json';
@@ -2190,16 +2246,33 @@ async function applyImport(data, replace){
   closeSheet();
   let songs = replace ? [] : Store.songs();
   let events = replace ? [] : Store.events();
-  const idMap = {};
+  const idMap = {};        // id de música no arquivo -> id aqui
+  const blobMap = {};      // id de faixa no arquivo  -> id aqui (só quando precisou trocar)
 
-  for(const s of data.songs){
-    const clash = songs.find(x => x.id === s.id);
-    let ns = Object.assign(newSong(), s);
+  for(const s0 of data.songs){
+    // aceita backup antigo (um áudio em s.audio) e novo (lista de faixas)
+    const ns = migrarAudio(Object.assign(newSong(), s0));
+    const clash = songs.find(x => x.id === ns.id);
     if(clash){
-      // mesmo id: se título igual, sobrescreve; senão gera novo id
-      if(clash.title === s.title){ Object.assign(clash, ns); idMap[s.id] = clash.id; continue; }
-      const old = ns.id; ns.id = uid(); idMap[old] = ns.id;
-    } else idMap[s.id] = ns.id;
+      if(clash.title === ns.title){
+        // mesma música: o backup manda, mas faixas que só existem aqui não se perdem
+        const soAqui = (clash.tracks || []).filter(t => !ns.tracks.some(n => n.id === t.id));
+        ns.tracks = ns.tracks.concat(soAqui);
+        Object.assign(clash, ns);
+        idMap[s0.id] = clash.id;
+        continue;
+      }
+      // id igual, música diferente: entra como outra música, com faixas de ids novos
+      // (senão as duas músicas passariam a dividir o mesmo arquivo de áudio)
+      ns.id = uid();
+      ns.tracks.forEach(t => {
+        const novo = uid();
+        blobMap[t.id] = novo;
+        if(ns.trackAtiva === t.id) ns.trackAtiva = novo;
+        t.id = novo;
+      });
+    }
+    idMap[s0.id] = ns.id;
     songs.push(ns);
   }
   for(const e of (data.events || [])){
@@ -2210,21 +2283,33 @@ async function applyImport(data, replace){
   Store.saveEvents(events);
 
   if(data.audios){
-    for(const oldId of Object.keys(data.audios)){
-      const nid = idMap[oldId] || oldId;
-      try{ await Audio_DB.put(nid, await dataURLToBlob(data.audios[oldId])); }catch(e){}
+    for(const chave of Object.keys(data.audios)){
+      try{ await Audio_DB.put(blobMap[chave] || chave, await dataURLToBlob(data.audios[chave])); }catch(e){}
     }
   }
 
-  // backup exportado sem os áudios: não deixa a música fingir que tem um.
+  // backup exportado sem os áudios: a faixa não pode fingir que tem arquivo.
   // (checa o arquivo de verdade, então reimportar no mesmo aparelho preserva)
   let semArquivo = 0;
   for(const s of songs){
-    if(s.audio && !(await Audio_DB.get(s.id))){ s.audio = null; semArquivo++; }
+    const ficam = [];
+    for(const t of (s.tracks || [])){
+      if(await Audio_DB.get(t.id)) ficam.push(t); else semArquivo++;
+    }
+    s.tracks = ficam;
+    migrarAudio(s);                         // acerta a faixa ativa
   }
-  Store.saveSongs(songs);
+  const gravou = Store.saveSongs(songs);
 
-  if(semArquivo) toast(semArquivo + ' música(s) sem o áudio — o backup era o sem áudio', 3500);
+  // "substituir tudo" deixa pra trás os arquivos das músicas que saíram: libera o espaço.
+  // Só depois de gravar com sucesso — se não gravou, os arquivos ainda têm dono.
+  if(gravou){
+    const emUso = new Set();
+    songs.forEach(s => (s.tracks || []).forEach(t => emUso.add(t.id)));
+    for(const k of await Audio_DB.keys()){ if(!emUso.has(k)) await Audio_DB.del(k); }
+  }
+
+  toast(semArquivo ? semArquivo + ' faixa(s) sem o áudio — o backup era o sem áudio' : 'Importado', semArquivo ? 3500 : 2000);
   go('#/'); render();
 }
 

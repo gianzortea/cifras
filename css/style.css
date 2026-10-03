@@ -268,6 +268,24 @@ html[data-esp="minimo"] .cifra .sec{margin:.25em 0 0}
 .rec-meter i{display:block; height:100%; width:0; background:var(--acc2); transition:width .09s linear}
 .tool.rec-stop, .tool.gravando{background:var(--danger); border-color:var(--danger); color:#fff}
 
+/* lista de faixas de áudio */
+.fxlist{display:flex; flex-direction:column; gap:6px; margin-bottom:12px}
+.fxrow{
+  display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  padding:11px 12px; border-radius:12px; background:var(--bg3); border:1px solid var(--line);
+  color:var(--fg);
+}
+.fxrow i{font-style:normal; font-size:13px; color:var(--fg3); flex:0 0 auto}
+.fxrow .fxname{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:14.5px}
+.fxrow small{color:var(--fg2); font-size:12px; flex:0 0 auto; font-variant-numeric:tabular-nums}
+.fxrow.on{border-color:var(--acc); background:var(--bg2)}
+.fxrow.on i{color:var(--acc)}
+/* botão no player com o nome da faixa que está tocando */
+.player .fxbtn{
+  max-width:92px; padding:6px 9px; font-size:12px; display:block;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
 /* recorte do áudio */
 .trim{
   background:var(--bg3); border:1px solid var(--line); border-radius:14px;

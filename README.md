@@ -38,8 +38,8 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Caber na tela** | Calcula sozinho a maior fonte que faz a música caber sem tocar na tela. **No máximo 2 colunas** numa tela — 3 colunas num celular deixam a coluna estreita demais pra uma linha de cifra. O botão de colunas fixa em 1 ou 2 quando você quiser. O **A− / A+** ajusta o tamanho; se passar do que cabe, aí sim vira página. |
 | **Autoscroll** | Dois modos, salvos por música: **velocidade** (px/s) ou **duração** — você digita "3:40" e ele calcula o ritmo pra terminar junto com a música. Se houver áudio carregado, um botão preenche a duração dele. |
 | **Desenhos de acorde** | Toque em qualquer acorde da cifra e veja as posições no braço. Também dá pra ver todos os acordes da música de uma vez, pelo menu. |
-| **Áudio** | Um MP3/M4A de referência por música, guardado offline. Botão ↻ faz a rolagem começar junto com o play. **Recorte**: defina onde começa e onde termina (ex.: pular 10s de silêncio) — tocando, pause no ponto e toque em *◉ aqui*, ou digite `10`, `0:10`, `1:05.5`. O player mostra só o trecho, e a rolagem por duração usa o tamanho do trecho. |
-| **Gravar** | Botão **● Gravar** na cifra: grava pelo microfone ali mesmo, com a letra na tela, e salva como o áudio da música ao parar. Barra com relógio e medidor de volume; continua visível no modo palco. Depois da gravação abre o mesmo recorte de início/fim. |
+| **Áudio** | **Várias faixas por música** (original, sua gravação, playback...), guardadas offline; uma toca por vez. Com mais de uma, o nome da faixa aparece no player e abre a lista pra trocar. Cada faixa tem nome editável e **recorte próprio** (onde começa e onde termina — tocando, pause no ponto e toque em *◉ aqui*, ou digite `10`, `0:10`, `1:05.5`). Botão ↻ faz a rolagem começar junto com o play; a rolagem por duração usa o tamanho do trecho. |
+| **Gravar** | Botão **● Gravar** na cifra: grava pelo microfone ali mesmo, com a letra na tela, e ao parar salva como **mais uma faixa** (nunca substitui as que já existem). Barra com relógio e medidor de volume; continua visível no modo palco. Depois abre o recorte de início/fim. |
 | **Eventos** | Setlists ordenadas: reordene **arrastando pela alça ≡** ou pelos botões ▲▼. Dentro da cifra aparecem ‹ › pra pular pra próxima. |
 | **Backup** | Dois JSONs: **Exportar cifras** (leve, sem os áudios) e **Exportar com áudios** (embute os arquivos em base64, ~34% maior que a soma dos MP3 — o tamanho estimado aparece no botão). Importar oferece mesclar ou substituir. |
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
@@ -92,6 +92,26 @@ Na importação, quem manda é o arquivo que existe de verdade: se o backup veio
 sem os áudios, a música deixa de anunciar que tem um (nada de ♫ mentiroso na
 lista). Reimportar o backup leve **no mesmo aparelho** preserva os áudios que já
 estavam ali, porque a checagem é feita no arquivo e não no rótulo.
+
+## Faixas de áudio
+
+Cada música tem uma lista `tracks`, e o arquivo de cada faixa fica no IndexedDB
+sob o **id da faixa**:
+
+```js
+tracks: [ { id, name, type, size, dur, gravado, start, end } ],   // start/end = recorte, em segundos
+trackAtiva: 'id-da-faixa-que-o-player-toca'
+```
+
+No formato antigo havia um áudio só (`audio`, `audioStart`, `audioEnd`) e o
+arquivo ficava sob o id da música. A conversão é feita na leitura, e a faixa
+**herda o id da música** — assim o arquivo que já está no aparelho continua
+valendo sem ser movido, e backups antigos importam direto.
+
+Ao importar, se uma música do arquivo tem o mesmo id de outra diferente que já
+existe aqui, ela entra com faixas de ids novos: sem isso as duas passariam a
+dividir o mesmo arquivo. "Substituir tudo" apaga os arquivos das músicas que
+saíram, mas só depois de gravar a lista nova com sucesso.
 
 ## Gravação
 

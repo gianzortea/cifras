@@ -39,7 +39,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const Store = {
-  songs(){ return readLS(LS.songs, []); },
+  songs(){ return readLS(LS.songs, []).map(migrarAudio); },
   saveSongs(list){ return writeLS(LS.songs, list); },
 
   events(){ return readLS(LS.events, []); },
@@ -60,10 +60,14 @@ const Store = {
   },
 
   deleteSong(id){
+    // pega as faixas ANTES de tirar a música da lista — depois não há mais de onde ler
+    const alvo = this.getSong(id);
+    const faixas = (alvo && alvo.tracks) || [];
     this.saveSongs(this.songs().filter(s => s.id !== id));
     const evs = this.events().map(e => ({...e, songs: (e.songs||[]).filter(x => x !== id)}));
     this.saveEvents(evs);
-    Audio_DB.del(id);
+    faixas.forEach(t => Audio_DB.del(t.id));      // arquivos de todas as faixas
+    Audio_DB.del(id);                             // e o do formato antigo, se houver
   },
 
   getEvent(id){ return this.events().find(e => e.id === id) || null; },
@@ -98,12 +102,39 @@ function newSong(partial){
     fitColsPref: 0,     // 0 = automático; 1 ou 2 = fixado pelo usuário
     notes: '',
     tags: [],
-    audio: null,        // {name, type, size}
-    audioStart: 0,      // segundos: onde a reprodução começa (pula silêncio do início)
-    audioEnd: 0,        // segundos: onde termina; 0 = até o fim do arquivo
+    tracks: [],         // faixas de áudio: {id, name, type, size, dur, gravado, start, end}
+    trackAtiva: null,   // id da faixa que o player toca
     createdAt: Date.now(),
     updatedAt: Date.now()
   }, partial || {});
+}
+
+/* ---------- faixas de áudio ----------
+   Cada música tem uma lista de faixas; o arquivo de cada uma fica no IndexedDB
+   sob o id da FAIXA. start/end são o recorte (segundos; end 0 = até o fim).
+
+   Formato antigo: um áudio só, em s.audio, com o arquivo sob o id da MÚSICA.
+   Na conversão a faixa herda o id da música — assim o arquivo que já está no
+   aparelho continua valendo, sem precisar mover nada. */
+function migrarAudio(s){
+  if(!s) return s;
+  if(s.audio && !(Array.isArray(s.tracks) && s.tracks.length)){
+    s.tracks = [{
+      id: s.id, name: s.audio.name || 'Áudio', type: s.audio.type || '', size: s.audio.size || 0,
+      dur: +s.audio.dur || 0, gravado: !!s.audio.gravado,
+      start: +s.audioStart || 0, end: +s.audioEnd || 0
+    }];
+    s.trackAtiva = s.id;
+  }
+  if(!Array.isArray(s.tracks)) s.tracks = [];
+  delete s.audio; delete s.audioStart; delete s.audioEnd;
+  if(!s.tracks.some(t => t.id === s.trackAtiva)) s.trackAtiva = s.tracks.length ? s.tracks[0].id : null;
+  return s;
+}
+
+function faixaAtiva(s){
+  if(!s || !s.tracks || !s.tracks.length) return null;
+  return s.tracks.find(t => t.id === s.trackAtiva) || s.tracks[0];
 }
 
 /* ---------- IndexedDB para áudio ---------- */
