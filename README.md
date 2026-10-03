@@ -32,7 +32,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 
 | | |
 |---|---|
-| **Cadastrar** | Cola o texto do Cifra Club (Ctrl+V). Título, artista, tom e capotraste são detectados; acordes ficam alinhados na posição certa. |
+| **Cadastrar** | Cola o texto do Cifra Club (Ctrl+V). Título, artista, tom e capotraste são detectados; acordes ficam alinhados na posição certa. Linha em branco vira só um respiro pequeno; para abrir um **espaço de uma linha inteira**, escreva `---` sozinho numa linha (vários `---` somam). |
 | **Ajustar acordes** | Modo "Editar acordes": arraste pros lados, toque pra trocar, toque na letra pra inserir um novo. Nesse modo dá pra **dar zoom com dois dedos e arrastar a vista em qualquer direção**, para acertar posição com precisão. |
 | **Mudar o tom** | Botões ▲/▼ ou escolha direta entre os 12 tons. A grafia acompanha o tom (Bb em tom de Fá, A# em tom de Si). |
 | **Caber na tela** | Calcula sozinho a maior fonte que faz a música caber sem tocar na tela. **No máximo 2 colunas** numa tela — 3 colunas num celular deixam a coluna estreita demais pra uma linha de cifra. O botão de colunas fixa em 1 ou 2 quando você quiser. O **A− / A+** ajusta o tamanho; se passar do que cabe, aí sim vira página. |
@@ -149,7 +149,8 @@ arrastar acorde e transpor sem estragar o alinhamento:
   ch: [ {p: 0, c: 'Em7'}, {p: 14, c: 'G'} ] }   // p = coluna do caractere
 ```
 
-Outros tipos de linha: `{t:'s'}` seção, `{t:'tab'}` tablatura, `{t:'b'}` branco.
+Outros tipos de linha: `{t:'s'}` seção, `{t:'tab'}` tablatura, `{t:'b'}` branco
+(respiro pequeno), `{t:'gap'}` espaço de uma linha — escrito como `---` no editor.
 
 O tom é guardado como está na fonte original + um deslocamento (`transpose`),
 então dá pra voltar ao original a qualquer momento sem perder nada.

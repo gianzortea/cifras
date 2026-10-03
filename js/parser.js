@@ -1,7 +1,8 @@
 /* =========================================================
    parser.js — converte texto colado (Cifra Club etc.) no modelo interno
    Modelo de linha:
-     {t:'b'}                              linha em branco
+     {t:'b'}                              linha em branco (respiro pequeno)
+     {t:'gap'}                            "---": espaço de uma linha inteira, de propósito
      {t:'s', text:'Intro'}                cabeçalho de seção
      {t:'tab', text:'E|--3--'}            tablatura (preserva bruto)
      {t:'l', text:'letra', ch:[{p,c}]}    letra + acordes posicionados
@@ -34,6 +35,11 @@ function cleanChordToken(t){
   return s;
 }
 
+/* Linha só de traços ("---"): espaço em branco de propósito na visualização.
+   Aceita travessão também, porque o teclado do celular troca "--" por "—". */
+const GAP_RE = /^\s*(?:-{3,}|[-–—]*[–—][-–—]*)\s*$/;
+function isGapLine(s){ return GAP_RE.test(s); }
+
 function isSectionLine(s){
   const t = s.trim();
   if(/^\[.+\]$/.test(t)) return true;
@@ -57,6 +63,7 @@ function tokensWithPos(line){
 /** É linha só de acordes? */
 function isChordLine(line){
   if(!line.trim()) return false;
+  if(isGapLine(line)) return false;
   if(isTabLine(line)) return false;
   const toks = tokensWithPos(line);
   if(!toks.length) return false;
@@ -119,6 +126,7 @@ function parseCifra(raw){
       if(lines.length && lines[lines.length-1].t !== 'b') lines.push({t:'b'});
       continue;
     }
+    if(isGapLine(cur)){ lines.push({t:'gap'}); continue; }        // antes da tablatura: "------" também é espaço
     if(isTabLine(cur)){ lines.push({t:'tab', text: cur.replace(/\s+$/,'')}); continue; }
 
     // seção pode vir junto com acordes: "[Intro] G  D  Em" ou "Intro: G  D  Em"
@@ -145,7 +153,7 @@ function parseCifra(raw){
       const chords = tokensWithPos(cur).map(x => ({ p: x.p, c: cleanChordToken(x.s) }));
       const next = src_lines[i+1];
       const nextIsLyric = next !== undefined && next.trim() && !isChordLine(next) &&
-                          !isTabLine(next) && !isSectionLine(next);
+                          !isTabLine(next) && !isSectionLine(next) && !isGapLine(next);
       if(nextIsLyric){
         lines.push({ t:'l', text: next.replace(/\s+$/,''), ch: chords });
         i++;
@@ -180,6 +188,7 @@ function serializeCifra(lines){
   const out = [];
   for(const l of (lines || [])){
     if(l.t === 'b'){ out.push(''); continue; }
+    if(l.t === 'gap'){ out.push('---'); continue; }
     if(l.t === 's'){ out.push('[' + l.text + ']'); continue; }
     if(l.t === 'tab'){ out.push(l.text); continue; }
     if(l.ch && l.ch.length){

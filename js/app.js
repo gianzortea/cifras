@@ -235,7 +235,8 @@ function viewEditor(id){
       (s ? '' : '<button class="btn" id="paste" style="margin-bottom:14px">&#128203; Colar da área de transferência</button>') +
       '<div class="field"><label>Cifra</label>' +
         '<textarea id="f_body" spellcheck="false" placeholder="Ctrl+V aqui a cifra copiada&#10;&#10;[Intro] G  D  Em  C&#10;&#10;G            D&#10;Exemplo de letra aqui">' + esc(raw) + '</textarea>' +
-        '<div class="hint">Cole exatamente como está no site: os acordes acima da letra são detectados e alinhados automaticamente.</div>' +
+        '<div class="hint">Cole exatamente como está no site: os acordes acima da letra são detectados e alinhados automaticamente. ' +
+          'Linha em branco vira só um respiro pequeno; pra abrir um <b>espaço de verdade</b>, escreva <b>---</b> sozinho numa linha.</div>' +
       '</div>' +
       '<button class="btn primary" id="save2">Salvar cifra</button>' +
     '</div>';
@@ -451,6 +452,7 @@ function renderCifra(){
   const s = V.song, out = [];
   (s.lines || []).forEach((l, li) => {
     if(l.t === 'b'){ out.push('<div class="ln blank"></div>'); return; }
+    if(l.t === 'gap'){ out.push('<div class="ln gap"></div>'); return; }
     if(l.t === 's'){ out.push('<div class="ln sec">' + esc(l.text) + '</div>'); return; }
     if(l.t === 'tab'){ out.push('<div class="ln tab">' + esc(l.text) + '</div>'); return; }
     const chs = (l.ch || []).map((c, ci) =>
