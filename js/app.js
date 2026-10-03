@@ -1485,6 +1485,12 @@ function ajustarAposPlayer(){
   if(v && v.classList.contains('fit') && !V.edit) autoFit();
 }
 
+/** "#01", "#02"... pela ordem da lista. No player cabe o número, não o nome. */
+function numFaixa(s, fx){
+  const i = (s.tracks || []).findIndex(t => t.id === fx.id);
+  return '#' + String(i + 1).padStart(2, '0');
+}
+
 function audioSheet(){
   const s = V.song;
   if(V.grav){ toast('Gravando — pare a gravação primeiro'); return; }
@@ -1496,6 +1502,7 @@ function audioSheet(){
     ? '<div class="fxlist">' + s.tracks.map(t =>
         '<button class="fxrow' + (fx && t.id === fx.id ? ' on' : '') + '" data-fx="' + t.id + '">' +
           '<i>' + (fx && t.id === fx.id ? '&#9679;' : '&#9675;') + '</i>' +
+          '<b class="fxnum">' + numFaixa(s, t) + '</b>' +
           '<span class="fxname">' + esc(t.name) + '</span>' +
           '<small>' + (t.dur ? fmtDur(t.dur) : humanSize(t.size)) + '</small>' +
         '</button>').join('') + '</div>'
@@ -1604,7 +1611,7 @@ function audioSheet(){
         fx.name = n;
         Store.upsertSong(s);
         const linha = $('.fxrow.on .fxname', el); if(linha) linha.textContent = n;
-        const bt = $('#aFx'); if(bt) bt.textContent = '♫ ' + n;
+        const bt = $('#aFx'); if(bt) bt.title = n;
       };
 
       const a = V.audioEl;
@@ -1691,10 +1698,11 @@ async function mountPlayer(){
     '<div class="player">' +
       '<button class="iconbtn" id="aPlay">&#9654;</button>' +
       // com mais de uma faixa, o nome da que está tocando vira o botão de troca
-      (s.tracks.length > 1 ? '<button class="tool fxbtn" id="aFx">&#9835; ' + esc(fx.name) + '</button>' : '') +
+      (s.tracks.length > 1 ? '<button class="tool fxbtn" id="aFx" title="' + esc(fx.name) + '">' + numFaixa(s, fx) + '</button>' : '') +
       '<span class="t" id="aCur">0:00</span>' +
       '<input type="range" id="aSeek" min="0" max="1000" value="0">' +
       '<span class="t" id="aDur">0:00</span>' +
+      '<button class="iconbtn volta5" id="aBack5" title="Voltar 5 segundos">&minus;5s</button>' +
       '<button class="iconbtn" id="aSync" title="Rolagem junto com o áudio">&#8635;</button>' +
     '</div>';
 
@@ -1771,9 +1779,31 @@ async function mountPlayer(){
       if(V.followAudio) stopScroll();
     }
   };
+  // Mudar de posição não pode parar a música: há navegador que pausa sozinho
+  // durante a busca. Se estava tocando, volta a tocar assim que a busca termina.
+  const irPara = (pos) => {
+    const tocava = !a.paused;
+    a.currentTime = pos;
+    if(tocava) a.addEventListener('seeked', () => {
+      if(a.paused && V.audioEl === a){ const p = a.play(); if(p && p.catch) p.catch(() => {}); }
+    }, { once: true });
+  };
   seek.oninput = () => {
     const t = trechoAudio();
-    if(t.len > 0) a.currentTime = t.ini + (seek.value / 1000) * t.len;
+    if(t.len > 0) irPara(t.ini + (seek.value / 1000) * t.len);
+  };
+  // volta 5s sem sair do trecho; se a rolagem está seguindo o áudio, ela volta junto
+  $('#aBack5').onclick = () => {
+    const t = trechoAudio();
+    const antes = a.currentTime;
+    const alvo = Math.max(t.ini, antes - 5);
+    irPara(alvo);
+    const voltou = antes - alvo;
+    if(V.followAudio && V.scrolling && voltou > 0){
+      const st = $('#stage');
+      if(st) st.scrollTop = Math.max(0, st.scrollTop - V.pps * voltou);
+    }
+    pintar();
   };
   const bFx = $('#aFx');
   if(bFx) bFx.onclick = () => audioSheet();
