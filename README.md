@@ -39,6 +39,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Autoscroll** | Dois modos, salvos por música: **velocidade** (px/s) ou **duração** — você digita "3:40" e ele calcula o ritmo pra terminar junto com a música. Se houver áudio carregado, um botão preenche a duração dele. |
 | **Desenhos de acorde** | Toque em qualquer acorde da cifra e veja as posições no braço. Também dá pra ver todos os acordes da música de uma vez, pelo menu. |
 | **Áudio** | Um MP3/M4A de referência por música, guardado offline. Botão ↻ faz a rolagem começar junto com o play. **Recorte**: defina onde começa e onde termina (ex.: pular 10s de silêncio) — tocando, pause no ponto e toque em *◉ aqui*, ou digite `10`, `0:10`, `1:05.5`. O player mostra só o trecho, e a rolagem por duração usa o tamanho do trecho. |
+| **Gravar** | Botão **● Gravar** na cifra: grava pelo microfone ali mesmo, com a letra na tela, e salva como o áudio da música ao parar. Barra com relógio e medidor de volume; continua visível no modo palco. Depois da gravação abre o mesmo recorte de início/fim. |
 | **Eventos** | Setlists ordenadas: reordene **arrastando pela alça ≡** ou pelos botões ▲▼. Dentro da cifra aparecem ‹ › pra pular pra próxima. |
 | **Backup** | Dois JSONs: **Exportar cifras** (leve, sem os áudios) e **Exportar com áudios** (embute os arquivos em base64, ~34% maior que a soma dos MP3 — o tamanho estimado aparece no botão). Importar oferece mesclar ou substituir. |
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
@@ -91,6 +92,24 @@ Na importação, quem manda é o arquivo que existe de verdade: se o backup veio
 sem os áudios, a música deixa de anunciar que tem um (nada de ♫ mentiroso na
 lista). Reimportar o backup leve **no mesmo aparelho** preserva os áudios que já
 estavam ali, porque a checagem é feita no arquivo e não no rótulo.
+
+## Gravação
+
+O gravador usa o `MediaRecorder` do navegador — nada de biblioteca. Detalhes que
+importam:
+
+- **Formato:** MP4/AAC quando o aparelho suporta (toca em qualquer celular e já
+  traz a duração no arquivo), senão WebM/Opus. A 128 kbps dá ~1 MB por minuto.
+- **WebM sai sem duração:** o `<audio>` abre com `duration = Infinity`, o que
+  quebraria a barra de posição e o recorte. O app guarda a duração que ele mesmo
+  mediu ao gravar e, ao abrir, pede uma posição absurda (`currentTime = 1e101`)
+  pra forçar o navegador a varrer o arquivo e descobrir a duração real.
+- **Sem filtros de voz:** cancelamento de eco, supressão de ruído e ganho
+  automático ficam desligados — eles tratam violão e canto como ruído.
+- **Não perde tomada:** regravar só troca o áudio antigo ao parar e salvar;
+  sair da música no meio salva em vez de descartar.
+- **Precisa de HTTPS** (ou localhost): o navegador só libera o microfone em
+  contexto seguro. No endereço do GitHub Pages funciona, inclusive offline.
 
 ## Onde os dados ficam
 

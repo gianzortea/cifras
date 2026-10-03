@@ -367,6 +367,7 @@ function viewSong(id, q){
         '<button class="tool" id="tFsPlus">A+</button>' +
         '<button class="tool" id="tEdit">&#9998; Editar acordes</button>' +
         '<button class="tool" id="tAudio">&#9835; Áudio</button>' +
+        '<button class="tool" id="tRec">&#9679; Gravar</button>' +
         '<button class="tool" id="tZen">&#9744; Palco</button>' +
       '</div>' +
 
@@ -396,6 +397,7 @@ function viewSong(id, q){
   $('#tFsPlus').onclick  = () => bumpFont(1);
   $('#tEdit').onclick  = () => toggleEdit();
   $('#tAudio').onclick = () => audioSheet();
+  $('#tRec').onclick   = () => { if(V.grav) pararGravacao(false); else pedirGravacao(); };
   $('#tZen').onclick   = () => toggleZen();
 
   $('#btnScroll').onclick = () => toggleScroll();
@@ -435,6 +437,7 @@ function viewSong(id, q){
 function onResize(){ if($('#viewer') && $('#viewer').classList.contains('fit')) autoFit(); }
 
 function teardownViewer(){
+  if(V.grav) pararGravacao(false);          // saiu no meio: salva em vez de perder a tomada
   stopScroll();
   window.removeEventListener('resize', onResize);
   if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }
@@ -1305,7 +1308,9 @@ function fmtTempo(sec){
 /** Trecho que realmente toca, em segundos do arquivo: {ini, fim, dur, len} */
 function trechoAudio(){
   const a = V.audioEl, s = V.song || {};
-  const dur = a && isFinite(a.duration) ? a.duration : 0;
+  // gravação em WebM sai sem a duração no arquivo: vale a que o app mediu ao gravar
+  const dur = a && isFinite(a.duration) && a.duration > 0 ? a.duration
+            : (s.audio && +s.audio.dur > 0 ? +s.audio.dur : 0);
   let ini = Math.max(0, +s.audioStart || 0);
   let fim = +s.audioEnd > 0 ? +s.audioEnd : (dur || Infinity);
   if(dur){ fim = Math.min(fim, dur); ini = Math.min(ini, dur); }
@@ -1313,15 +1318,185 @@ function trechoAudio(){
   return { ini: ini, fim: fim, dur: dur, len: isFinite(fim) ? fim - ini : 0 };
 }
 
+/* ---------- gravador ----------
+   Grava pelo microfone sem sair da cifra: a barra de gravação fica no lugar do
+   player e a letra continua na tela, pra tocar lendo. */
+
+/** MP4/AAC primeiro: toca em qualquer aparelho (iPhone inclusive) e já vem com a
+    duração no arquivo. WebM é o plano B — funciona, mas sai sem duração. */
+function tipoDeGravacao(){
+  const ordem = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+  for(const t of ordem){ try{ if(MediaRecorder.isTypeSupported(t)) return t; }catch(e){} }
+  return '';
+}
+
+function pedirGravacao(){
+  const s = V.song;
+  if(V.grav) return;
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined'){
+    const seguro = location.protocol === 'https:' || /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+    toast(seguro ? 'Este navegador não consegue gravar áudio'
+                 : 'Gravar exige HTTPS — abra pelo endereço do GitHub Pages', 3800);
+    return;
+  }
+  if(s.audio){
+    confirmSheet('Gravar por cima?',
+      'A gravação vai substituir "' + s.audio.name + '". O áudio atual só é trocado quando você parar e salvar.',
+      'Gravar', iniciarGravacao);
+  } else {
+    closeSheet();
+    iniciarGravacao();
+  }
+}
+
+async function iniciarGravacao(){
+  const s = V.song;
+  let stream;
+  try{
+    // sem os filtros de chamada de voz: eles "limpam" violão e canto como se fosse ruído
+    stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  }catch(e){
+    const n = e && e.name;
+    toast(n === 'NotAllowedError' || n === 'SecurityError' ? 'Microfone bloqueado — libere nas permissões do site'
+        : n === 'NotFoundError' ? 'Nenhum microfone encontrado'
+        : 'Não consegui abrir o microfone', 3800);
+    return;
+  }
+  // saiu da música enquanto o navegador pedia permissão
+  if(!$('#viewer') || V.song !== s || V.grav){ stream.getTracks().forEach(t => t.stop()); return; }
+  if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }
+
+  const tipo = tipoDeGravacao();
+  let rec;
+  try{ rec = new MediaRecorder(stream, tipo ? { mimeType: tipo, audioBitsPerSecond: 128000 } : { audioBitsPerSecond: 128000 }); }
+  catch(e){ rec = new MediaRecorder(stream); }
+
+  const g = V.grav = { rec: rec, stream: stream, partes: [], songId: s.id, t0: performance.now(),
+                       descartar: false, pico: 0, avisouMudo: false };
+  rec.ondataavailable = (e) => { if(e.data && e.data.size) g.partes.push(e.data); };
+  rec.onstart = () => { g.t0 = performance.now(); };
+  rec.onstop  = () => finalizarGravacao(g);
+  rec.onerror = () => { toast('A gravação falhou'); pararGravacao(true); };
+  rec.start(1000);
+
+  // medidor de volume: confirma na hora que o microfone está captando
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    g.ctx = new AC();
+    g.an = g.ctx.createAnalyser();
+    g.an.fftSize = 512;
+    g.ctx.createMediaStreamSource(stream).connect(g.an);
+    g.buf = new Uint8Array(g.an.fftSize);
+  }catch(e){}
+
+  $('#playerSlot').innerHTML =
+    '<div class="player rec">' +
+      '<span class="rec-dot"></span>' +
+      '<span class="t rec-t" id="rT">0:00</span>' +
+      '<div class="rec-meter"><i id="rLvl"></i></div>' +
+      '<button class="iconbtn" id="rX" title="Descartar">&#10005;</button>' +
+      '<button class="tool rec-stop" id="rStop">&#9632; Parar e salvar</button>' +
+    '</div>';
+  $('#rStop').onclick = () => pararGravacao(false);
+  $('#rX').onclick = () => confirmSheet('Descartar gravação?', 'O que foi gravado até aqui será perdido.',
+                                       'Descartar', () => pararGravacao(true));
+  const b = $('#tRec');
+  if(b){ b.innerHTML = '&#9632; Parar'; b.classList.add('gravando'); }
+  ajustarAposPlayer();
+
+  g.relogio = setInterval(() => {
+    const seg = (performance.now() - g.t0) / 1000;
+    const t = $('#rT'); if(t) t.textContent = fmtDur(Math.floor(seg));
+    if(g.an){
+      g.an.getByteTimeDomainData(g.buf);
+      let pico = 0;
+      for(let i = 0; i < g.buf.length; i++){ const d = Math.abs(g.buf[i] - 128); if(d > pico) pico = d; }
+      g.pico = Math.max(g.pico, pico);
+      const l = $('#rLvl'); if(l) l.style.width = Math.min(100, Math.round(pico / 128 * 160)) + '%';
+      if(seg > 4 && g.pico < 2 && !g.avisouMudo){
+        g.avisouMudo = true;
+        toast('O microfone não está captando som', 3500);
+      }
+    }
+  }, 100);
+  toast('Gravando — toque em "Parar e salvar" quando terminar', 2600);
+}
+
+function pararGravacao(descartar){
+  const g = V.grav;
+  if(!g || g.parando) return;
+  g.parando = true;
+  g.descartar = !!descartar;
+  g.dur = (performance.now() - g.t0) / 1000;
+  try{
+    if(g.rec.state !== 'inactive') g.rec.stop();      // dispara onstop -> finalizarGravacao
+    else finalizarGravacao(g);
+  }catch(e){ finalizarGravacao(g); }
+}
+
+async function finalizarGravacao(g){
+  if(g.fechada) return;
+  g.fechada = true;
+  clearInterval(g.relogio);
+  try{ g.stream.getTracks().forEach(t => t.stop()); }catch(e){}     // apaga a luz do microfone
+  try{ if(g.ctx) g.ctx.close(); }catch(e){}
+  if(V.grav === g) V.grav = null;
+  if(g.dur == null) g.dur = (performance.now() - g.t0) / 1000;
+
+  const naTela = () => !!($('#viewer') && V.song && V.song.id === g.songId);
+  if(naTela()){
+    const b = $('#tRec');
+    if(b){ b.innerHTML = '&#9679; Gravar'; b.classList.remove('gravando'); }
+  }
+  const restaurarPlayer = async () => {
+    if(!naTela()) return;
+    if(V.song.audio) await mountPlayer();
+    else { $('#playerSlot').innerHTML = ''; ajustarAposPlayer(); }
+  };
+
+  const blob = new Blob(g.partes, { type: g.rec.mimeType || (g.partes[0] && g.partes[0].type) || 'audio/webm' });
+  if(g.descartar){ await restaurarPlayer(); toast('Gravação descartada'); return; }
+  if(!blob.size || g.dur < 0.5){ await restaurarPlayer(); toast('Gravação curta demais — nada foi salvo'); return; }
+
+  await Audio_DB.put(g.songId, blob);
+  const s = naTela() ? V.song : Store.getSong(g.songId);
+  if(!s) return;
+  const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+  s.audio = {
+    name: 'Gravação ' + p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + ' ' + p2(d.getHours()) + 'h' + p2(d.getMinutes()),
+    type: blob.type, size: blob.size,
+    dur: Math.round(g.dur * 10) / 10,      // medida pelo app: WebM gravado não traz a duração
+    gravado: true
+  };
+  s.audioStart = 0; s.audioEnd = 0;
+  Store.upsertSong(s);
+
+  if(naTela()){
+    await mountPlayer();
+    toast('Gravação salva — ajuste o início e o fim se quiser', 3000);
+    audioSheet();                          // já abre no recorte
+  } else {
+    toast('Gravação salva em "' + s.title + '"', 3000);
+  }
+}
+
+/** O player (ou a barra de gravação) aparecer/sumir muda a altura do palco */
+function ajustarAposPlayer(){
+  const v = $('#viewer');
+  if(v && v.classList.contains('fit') && !V.edit) autoFit();
+}
+
 function audioSheet(){
   const s = V.song;
+  if(V.grav){ toast('Gravando — pare a gravação primeiro'); return; }
   const temAudio = !!(s.audio && V.audioEl);
 
   sheet('<h3>Áudio de referência</h3>' +
     (s.audio
       ? '<div class="card" style="margin:0 0 14px"><div class="info"><b>' + esc(s.audio.name) + '</b>' +
         '<small>' + humanSize(s.audio.size) + ' · <span id="tTotal">—</span></small></div></div>'
-      : '<p style="color:var(--fg2)">Nenhum áudio. Escolha um MP3/M4A do celular — fica salvo offline.</p>') +
+      : '<p style="color:var(--fg2)">Nenhum áudio. Grave agora pelo microfone ou escolha um MP3/M4A do celular — fica salvo offline.</p>') +
 
     (temAudio
       ? '<div class="trim">' +
@@ -1351,11 +1526,15 @@ function audioSheet(){
       : '') +
 
     (temAudio ? '<button class="btn primary" id="aOk" style="margin-bottom:9px">Pronto</button>' : '') +
-    '<button class="btn' + (temAudio ? '' : ' primary') + '" id="aPick" style="margin-bottom:9px">' +
-      (s.audio ? 'Trocar áudio' : 'Escolher áudio') + '</button>' +
+    '<div class="row" style="margin-bottom:9px">' +
+      '<button class="btn' + (temAudio ? '' : ' primary') + '" id="aRec">&#9679; ' +
+        (s.audio ? 'Gravar de novo' : 'Gravar agora') + '</button>' +
+      '<button class="btn" id="aPick">' + (s.audio ? 'Trocar arquivo' : 'Escolher arquivo') + '</button>' +
+    '</div>' +
     (s.audio ? '<button class="btn danger" id="aDel">Remover áudio</button>' : ''),
 
     (el) => {
+      $('#aRec', el).onclick = () => pedirGravacao();
       $('#aPick', el).onclick = () => {
         const f = $('#fileAudio');
         f.value = '';
@@ -1381,6 +1560,7 @@ function audioSheet(){
         Store.upsertSong(s);
         const p = $('#playerSlot'); if(p) p.innerHTML = '';
         V.audioEl = null;
+        ajustarAposPlayer();
         closeSheet(); toast('Áudio removido');
       };
       if(!temAudio) return;
@@ -1504,8 +1684,23 @@ async function mountPlayer(){
     }, 40);
   };
 
-  a.onloadedmetadata = () => { a.currentTime = trechoAudio().ini; pintar(); };
-  a.ontimeupdate = pintar;
+  // WebM gravado pelo navegador abre com duration = Infinity. Pedir uma posição
+  // absurda obriga o navegador a varrer o arquivo e descobrir a duração de verdade.
+  let consertando = false;
+  a.onloadedmetadata = () => {
+    if(isFinite(a.duration)){ a.currentTime = trechoAudio().ini; pintar(); return; }
+    consertando = true;
+    const pronto = () => {
+      if(!consertando) return;
+      consertando = false;
+      a.currentTime = trechoAudio().ini;
+      pintar();
+    };
+    a.ondurationchange = () => { if(isFinite(a.duration)) pronto(); };
+    setTimeout(pronto, 3000);                // não achou: segue com a duração medida pelo app
+    try{ a.currentTime = 1e101; }catch(e){ pronto(); }
+  };
+  a.ontimeupdate = () => { if(!consertando) pintar(); };
   a.onplay  = () => { play.innerHTML = '&#9208;'; play.classList.add('on'); vigiar(); };
   a.onpause = () => { play.innerHTML = '&#9654;'; play.classList.remove('on'); pintar(); };
   a.onended = () => { V.audioLivre = false; terminar(); };
@@ -1531,6 +1726,7 @@ async function mountPlayer(){
     $('#aSync').classList.toggle('on', V.followAudio);
     toast(V.followAudio ? 'Rolagem segue o áudio' : 'Rolagem independente');
   };
+  ajustarAposPlayer();
 }
 
 /* ---------- navegação de evento ---------- */
