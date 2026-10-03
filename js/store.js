@@ -34,6 +34,10 @@ const DEFAULT_SETTINGS = {
   keepAwake: true,
   showChords: true,
   spacing: 'compacto',   // normal | compacto | minimo
+  online: false,         // repertório no GitHub (js/online.js)
+  ghRepo: '',            // "dono/repositorio"
+  ghToken: '',           // só neste aparelho; NUNCA entra em exportação
+  ghBaixou: 0, ghEnviou: 0, ghVersao: null,
 
   notation: 'en'   // 'en' = C D E | 'pt' = Dó Ré Mi (só exibição do tom)
 };
@@ -83,6 +87,14 @@ const Store = {
 
   deleteEvent(id){ this.saveEvents(this.events().filter(e => e.id !== id)); }
 };
+
+/** Ajustes que podem sair do aparelho. O token e o estado da sincronia ficam de fora:
+    o JSON exportado vai pra WhatsApp, e-mail e — no modo online — pra um repositório público. */
+function settingsParaExportar(){
+  const s = Store.settings();
+  ['ghToken', 'ghRepo', 'online', 'ghBaixou', 'ghEnviou', 'ghVersao'].forEach(k => { delete s[k]; });
+  return s;
+}
 
 function newSong(partial){
   return Object.assign({

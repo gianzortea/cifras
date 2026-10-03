@@ -42,6 +42,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Gravar** | Botão **● Gravar** na cifra: grava pelo microfone ali mesmo, com a letra na tela, e ao parar salva como **mais uma faixa** (nunca substitui as que já existem). Barra com relógio e medidor de volume; continua visível no modo palco. Depois abre o recorte de início/fim. |
 | **Eventos** | Setlists ordenadas: reordene **arrastando pela alça ≡** ou pelos botões ▲▼. Dentro da cifra aparecem ‹ › pra pular pra próxima. |
 | **Backup** | Dois JSONs: **Exportar cifras** (leve, sem os áudios) e **Exportar com áudios** (embute os arquivos em base64, ~34% maior que a soma dos MP3 — o tamanho estimado aparece no botão). Importar oferece mesclar ou substituir. |
+| **Online (GitHub)** | Opcional, em Ajustes: o repertório (cifras, eventos **e áudios**) fica num repositório do GitHub. **Baixar** não precisa de conta nem token; **Enviar** pede um token de quem mantém o repertório. Tudo manual, por botão. O app continua guardando tudo no aparelho, então funciona offline depois de baixar. |
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
 | **Zoom** | Pinça com dois dedos em **qualquer modo**, inclusive *caber na tela* (no computador: Ctrl + roda ou pinça no trackpad). É uma lupa: amplia sem refazer o layout, então voltar ao 100% (no botão `150% ✕`) deixa tudo exatamente como estava. |
 
@@ -72,6 +73,7 @@ js/chords.js        acordes: reconhecimento, transposição, simplificação
 js/parser.js        texto colado -> modelo de linhas com acordes posicionados
 js/diagrams.js      desenhos de acorde (abertos, pestana e busca no braço)
 js/store.js         localStorage (músicas/eventos) + IndexedDB (áudios)
+js/online.js        enviar/baixar o repertório num repositório do GitHub
 js/app.js           rotas, telas e o visualizador
 sw.js               cache offline
 manifest.json       instalação como app
@@ -92,6 +94,40 @@ Na importação, quem manda é o arquivo que existe de verdade: se o backup veio
 sem os áudios, a música deixa de anunciar que tem um (nada de ♫ mentiroso na
 lista). Reimportar o backup leve **no mesmo aparelho** preserva os áudios que já
 estavam ali, porque a checagem é feita no arquivo e não no rótulo.
+
+## Modo online (GitHub como armazenamento)
+
+Sem servidor e sem banco: um repositório público do GitHub guarda os dados
+([cifras-dados](https://github.com/gianzortea/cifras-dados)).
+
+```
+cifras.json            o mesmo JSON do exportar/importar, + audioFiles {idDaFaixa: caminho}
+audio/<idDaFaixa>.ext  um arquivo por faixa
+```
+
+**Baixar** (qualquer pessoa): lê o `cifras.json`, mostra quantas músicas e quantos
+MB de áudio faltam, e pergunta *mesclar* ou *substituir*. Só baixa os áudios que o
+aparelho ainda não tem. Ao mesclar, o aparelho mantém o que é dele: tamanho de
+letra, colunas e — pra quem só lê — o tom que escolheu.
+
+**Enviar** (quem tem token): o repositório passa a espelhar o aparelho. A ordem é
+áudios → JSON → limpeza dos áudios sem uso, pra quem baixar no meio nunca receber
+um JSON apontando pra áudio que ainda não subiu; e um envio interrompido continua
+de onde parou. Se o GitHub tem uma versão que este aparelho não conhece (enviada de
+outro aparelho), o app avisa antes de sobrescrever.
+
+Detalhes que custaram descobrir:
+
+- **Cache de leitura sem token.** A API guarda por ~60s a resposta de quem lê sem
+  token — inclusive um "não encontrado". Cada leitura leva um parâmetro novo na
+  URL pra vir sempre a versão atual.
+- **Limite de 60 leituras por hora** pra quem não tem token (por rede, então uma
+  banda inteira no mesmo wi-fi divide). Por isso só o JSON vai pela API; os áudios
+  vêm de `raw.githubusercontent.com`, que não conta nesse limite.
+- **O token nunca sai do aparelho**: fica fora de toda exportação e do JSON
+  enviado (`settingsParaExportar`). O repositório é público, então isso importa.
+- Tetos do GitHub: arquivo de até ~45 MB pela API e repositório recomendado
+  abaixo de 1 GB — umas 250 faixas de 4 minutos a ~1 MB por minuto.
 
 ## Faixas de áudio
 

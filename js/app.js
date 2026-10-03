@@ -1649,15 +1649,17 @@ function audioSheet(){
 
       // prévia: passeia pelo arquivo INTEIRO (pra achar o ponto), sem mexer na rolagem;
       // os botões de teste, ao contrário, respeitam o recorte
-      $('#tPlay', el).onclick = () => { V.audioLivre = true; if(a.paused) a.play(); else a.pause(); };
+      $('#tPlay', el).onclick = () => {
+        V.audioLivre = true;
+        if(a.paused) V.audioTocarEm(a.currentTime); else { V.audioQuerTocar = false; a.pause(); }
+      };
       $('#tBack', el).onclick = () => { a.currentTime = Math.max(0, a.currentTime - 1); pintar(); };
       $('#tFwd', el).onclick  = () => { a.currentTime = Math.min(a.duration || 1e9, a.currentTime + 1); pintar(); };
-      $('#tTestIni', el).onclick = () => { V.audioLivre = false; a.currentTime = trechoAudio().ini; a.play(); };
+      $('#tTestIni', el).onclick = () => { V.audioLivre = false; V.audioTocarEm(trechoAudio().ini); };
       $('#tTestFim', el).onclick = () => {
         const t = trechoAudio();
         V.audioLivre = false;
-        a.currentTime = Math.max(t.ini, t.fim - 4);       // 4s antes do corte
-        a.play();
+        V.audioTocarEm(Math.max(t.ini, t.fim - 4));       // 4s antes do corte
       };
 
       function pintar(){
@@ -1724,6 +1726,7 @@ async function mountPlayer(){
   V.audioPintar = pintar;
 
   const terminar = () => {
+    V.audioQuerTocar = false;
     a.pause();
     a.currentTime = trechoAudio().ini;
     if(V.followAudio) stopScroll();
@@ -1771,22 +1774,32 @@ async function mountPlayer(){
     if(a.paused){
       V.audioLivre = false;
       const t = trechoAudio();
-      if(a.currentTime < t.ini - 0.05 || a.currentTime >= t.fim - 0.05) a.currentTime = t.ini;
-      a.play();
+      const fora = a.currentTime < t.ini - 0.05 || a.currentTime >= t.fim - 0.05;
+      V.audioTocarEm(fora ? t.ini : a.currentTime);
       if(V.followAudio && !V.scrolling) startScroll();
     } else {
+      V.audioQuerTocar = false;
       a.pause();
       if(V.followAudio) stopScroll();
     }
   };
   // Mudar de posição não pode parar a música: há navegador que pausa sozinho
   // durante a busca. Se estava tocando, volta a tocar assim que a busca termina.
+  // V.audioQuerTocar separa "o navegador pausou sozinho na busca" (retoma) de
+  // "o usuário pausou" ou "chegou ao fim do recorte" (não retoma)
+  const tocar = () => { V.audioQuerTocar = true; const p = a.play(); if(p && p.catch) p.catch(() => {}); };
+  const retomarAposBusca = () => a.addEventListener('seeked', () => {
+    if(a.paused && V.audioEl === a && V.audioQuerTocar) tocar();
+  }, { once: true });
   const irPara = (pos) => {
     const tocava = !a.paused;
     a.currentTime = pos;
-    if(tocava) a.addEventListener('seeked', () => {
-      if(a.paused && V.audioEl === a){ const p = a.play(); if(p && p.catch) p.catch(() => {}); }
-    }, { once: true });
+    if(tocava) retomarAposBusca();
+  };
+  /** Toca a partir de uma posição (o play do recorte e os botões de teste usam isso) */
+  V.audioTocarEm = (pos) => {
+    if(Math.abs(a.currentTime - pos) > 0.05){ a.currentTime = pos; retomarAposBusca(); }
+    tocar();
   };
   seek.oninput = () => {
     const t = trechoAudio();
@@ -2190,6 +2203,8 @@ function viewSettings(){
         'Os <b>áudios não vão junto</b> nesse arquivo: pra levá-los, use a segunda opção, ' +
         'que embute os arquivos e fica bem maior.</div>' +
 
+      onlineSecaoHTML() +
+
       '<div class="sep" style="margin:20px 0"></div>' +
       '<h3 style="font-size:15px;margin:0 0 10px">Versão</h3>' +
       '<button class="btn" id="chkUpd" style="margin-bottom:9px">&#8635; Procurar atualização</button>' +
@@ -2214,6 +2229,7 @@ function viewSettings(){
   $('#chkUpd').onclick = () => procurarAtualizacao();
   versaoInstalada().then(v => { const el = $('#verNum'); if(el) el.textContent = v; });
 
+  onlineLigar();
   $('#expJson').onclick = () => doExport(false);
   $('#expFull').onclick = () => doExport(true);
   $('#impJson').onclick = () => doImport();
@@ -2224,11 +2240,15 @@ function viewSettings(){
   });
 }
 
-async function doExport(withAudio){
-  const data = {
+function dadosParaExportar(){
+  return {
     app: 'cifras', version: 1, exportedAt: new Date().toISOString(),
-    settings: Store.settings(), songs: Store.songs(), events: Store.events(), audios: {}
+    settings: settingsParaExportar(), songs: Store.songs(), events: Store.events(), audios: {}
   };
+}
+
+async function doExport(withAudio){
+  const data = dadosParaExportar();
   if(withAudio){
     toast('Preparando áudios...');
     for(const s of data.songs){
@@ -2290,6 +2310,8 @@ async function applyImport(data, replace){
         // mesma música: o backup manda, mas faixas que só existem aqui não se perdem
         const soAqui = (clash.tracks || []).filter(t => !ns.tracks.some(n => n.id === t.id));
         ns.tracks = ns.tracks.concat(soAqui);
+        // ajustes que são deste aparelho (tamanho de letra, colunas...) não vêm de fora
+        (data.__manter || []).forEach(k => { if(clash[k] !== undefined) ns[k] = clash[k]; });
         Object.assign(clash, ns);
         idMap[s0.id] = clash.id;
         continue;
@@ -2310,13 +2332,19 @@ async function applyImport(data, replace){
   for(const e of (data.events || [])){
     const ne = Object.assign({ id: uid(), name: 'Evento', date: '', songs: [], notes: '' }, e);
     ne.songs = (ne.songs || []).map(x => idMap[x] || x).filter(x => songs.some(s => s.id === x));
-    if(!events.some(x => x.id === ne.id)) events.push(ne);
+    const i = events.findIndex(x => x.id === ne.id);
+    if(i >= 0) events[i] = ne; else events.push(ne);       // evento que já existe é atualizado (ordem das músicas)
   }
   Store.saveEvents(events);
 
   if(data.audios){
     for(const chave of Object.keys(data.audios)){
       try{ await Audio_DB.put(blobMap[chave] || chave, await dataURLToBlob(data.audios[chave])); }catch(e){}
+    }
+  }
+  if(data.__blobs){                         // áudios baixados do GitHub já vêm como arquivo
+    for(const par of data.__blobs){
+      try{ await Audio_DB.put(blobMap[par[0]] || par[0], par[1]); }catch(e){}
     }
   }
 
@@ -2341,7 +2369,7 @@ async function applyImport(data, replace){
     for(const k of await Audio_DB.keys()){ if(!emUso.has(k)) await Audio_DB.del(k); }
   }
 
-  toast(semArquivo ? semArquivo + ' faixa(s) sem o áudio — o backup era o sem áudio' : 'Importado', semArquivo ? 3500 : 2000);
+  toast(semArquivo ? semArquivo + ' faixa(s) ficaram sem o áudio (o arquivo não veio)' : 'Importado', semArquivo ? 3500 : 2000);
   go('#/'); render();
 }
 
@@ -2355,6 +2383,201 @@ async function applyImport(data, replace){
 
 applyTheme();
 render();
+
+/* =========================================================
+   ONLINE — repertório num repositório do GitHub (ver js/online.js)
+   Tudo manual: nada sobe nem desce sem o usuário mandar.
+   ========================================================= */
+
+// ajustes que dependem da tela de cada aparelho: baixar do GitHub não mexe neles
+const CAMPOS_DE_TELA = ['fontSize', 'fitMode', 'fitScale', 'fitColsPref'];
+
+/** No GitHub Pages dá pra adivinhar o repositório de dados: mesmo dono, "cifras-dados" */
+function repoPadrao(){
+  const m = location.hostname.match(/^([a-z0-9-]+)\.github\.io$/i);
+  return m ? m[1] + '/cifras-dados' : '';
+}
+
+function onlineCfg(){
+  const repo = String(S.ghRepo || repoPadrao()).trim();
+  if(!ghRepoValido(repo)){ toast('Informe o repositório no formato dono/repositorio', 3000); return null; }
+  return { repo: repo, token: String(S.ghToken || '').trim() };
+}
+
+function fmtDataHora(v){
+  const d = new Date(v);
+  if(isNaN(d)) return '';
+  const p2 = (n) => String(n).padStart(2, '0');
+  return p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + ' às ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+
+/** Folha de "aguarde" que não fecha com toque fora: fechar no meio não cancela nada, só confunde */
+function ocupado(titulo){
+  closeSheet();
+  const ov = document.createElement('div');
+  ov.className = 'overlay';
+  ov.innerHTML = '<div class="sheet"><h3>' + esc(titulo) + '</h3>' +
+    '<p id="ocTxt" style="color:var(--fg2);margin:0 0 8px">Começando...</p>' +
+    '<div class="hint">Deixe o app aberto até terminar.</div></div>';
+  $('#modal-root').appendChild(ov);
+  return { diga: (t) => { const e = $('#ocTxt'); if(e) e.textContent = t; }, fechar: closeSheet };
+}
+
+function avisoSheet(titulo, html){
+  sheet('<h3>' + esc(titulo) + '</h3><div style="color:var(--fg2);margin:0 0 16px;line-height:1.5">' + html + '</div>' +
+        '<button class="btn primary" id="avOk">Ok</button>',
+        (el) => { $('#avOk', el).onclick = closeSheet; });
+}
+function erroOnline(e){
+  avisoSheet('Não deu certo', esc(e && e.message ? e.message : 'Erro inesperado.'));
+}
+
+/** Este aparelho já tem o arquivo desta faixa? (confere o tamanho, não só o id) */
+async function jaTemFaixa(t){
+  const b = await Audio_DB.get(t.id);
+  return !!b && (!t.size || b.size === t.size);
+}
+
+async function onlineBaixar(){
+  const cfg = onlineCfg();
+  if(!cfg) return;
+  const oc = ocupado('Baixando do GitHub');
+  let dados, falta;
+  try{
+    oc.diga('Lendo o repertório...');
+    dados = (await ghBaixarJson(cfg)).dados;
+    falta = await ghFaltamBaixar(dados, jaTemFaixa);
+  }catch(e){ oc.fechar(); erroOnline(e); return; }
+  oc.fechar();
+
+  const aplicar = async (substituir) => {
+    const oc2 = ocupado('Baixando do GitHub');
+    try{
+      const r = await ghBaixarAudios(cfg, dados, { jaTem: jaTemFaixa, progresso: oc2.diga });
+      oc2.diga('Guardando no aparelho...');
+      dados.__blobs = r.blobs;
+      // quem só lê (sem token) também mantém o tom que escolheu pra tocar
+      dados.__manter = CAMPOS_DE_TELA.concat(cfg.token ? [] : ['transpose']);
+      S.ghBaixou = Date.now();
+      if(cfg.token){ try{ S.ghVersao = await ghVersao(cfg); }catch(e){} }
+      Store.saveSettings(S);
+      await applyImport(dados, substituir);
+      if(r.falharam) toast(r.falharam + ' áudio(s) não baixaram — toque em Baixar de novo depois', 4500);
+    }catch(e){ oc2.fechar(); erroOnline(e); }
+  };
+
+  const n = dados.songs.length, ne = (dados.events || []).length;
+  sheet('<h3>Repertório do GitHub</h3>' +
+    '<p style="color:var(--fg2);line-height:1.5">' + n + ' música(s) e ' + ne + ' evento(s)' +
+      (dados.exportedAt ? ', enviado em ' + fmtDataHora(dados.exportedAt) : '') + '.<br>' +
+      (falta.faixas ? 'Áudios pra baixar: <b>' + falta.faixas + '</b> (~' + humanSize(falta.bytes) + ').'
+                    : 'Nenhum áudio novo pra baixar.') + '</p>' +
+    '<button class="btn primary" id="oMerge" style="margin-bottom:6px">Mesclar com o que já tenho</button>' +
+    '<div class="hint" style="margin:0 0 12px">Atualiza as músicas do GitHub e mantém as que só existem aqui.</div>' +
+    '<button class="btn danger" id="oRepl" style="margin-bottom:6px">Substituir tudo</button>' +
+    '<div class="hint">Fica idêntico ao GitHub: o que só existe neste aparelho é apagado.</div>',
+    (el) => {
+      $('#oMerge', el).onclick = () => aplicar(false);
+      $('#oRepl', el).onclick = () => aplicar(true);
+    });
+}
+
+async function onlineEnviar(){
+  const cfg = onlineCfg();
+  if(!cfg) return;
+  if(!cfg.token){ toast('Cole o token pra poder enviar', 3000); return; }
+
+  const oc = ocupado('Conferindo o GitHub');
+  let info, versaoRemota;
+  try{
+    oc.diga('Conferindo o acesso...');
+    info = await ghPodeEscrever(cfg);
+    versaoRemota = await ghVersao(cfg);
+  }catch(e){ oc.fechar(); erroOnline(e); return; }
+  oc.fechar();
+  if(!info.escreve){
+    erroOnline(new Error('Esse token consegue ler, mas não escrever no repositório. Ele precisa da permissão "Contents: Read and write".'));
+    return;
+  }
+
+  const dados = dadosParaExportar();
+  const faixas = ghTodasFaixas(dados);
+  const bytes = faixas.reduce((a, t) => a + (t.size || 0), 0);
+  // o GitHub tem algo que este aparelho nunca baixou nem enviou? então enviar apaga trabalho alheio
+  const outroAparelho = !!versaoRemota && versaoRemota !== S.ghVersao;
+
+  let texto = 'O GitHub vai ficar igual a este aparelho: ' + dados.songs.length + ' música(s), ' +
+    dados.events.length + ' evento(s) e ' + faixas.length + ' faixa(s) de áudio' +
+    (bytes ? ' (' + humanSize(bytes) + ')' : '') + '.';
+  if(!info.privado) texto += ' O repositório é público: qualquer pessoa pode ver e baixar.';
+  if(!dados.songs.length) texto += ' ATENÇÃO: este aparelho não tem nenhuma música — enviar vai esvaziar o repertório online.';
+  else if(outroAparelho) texto += ' ATENÇÃO: o GitHub tem uma versão que este aparelho ainda não baixou. Enviar agora apaga o que foi enviado de outro aparelho — se for o caso, baixe primeiro.';
+
+  confirmSheet('Enviar para o GitHub?', texto, 'Enviar', async () => {
+    const oc2 = ocupado('Enviando para o GitHub');
+    try{
+      const r = await ghEnviar(cfg, dados, { blobDaFaixa: (id) => Audio_DB.get(id), progresso: oc2.diga });
+      S.ghVersao = r.versao; S.ghEnviou = Date.now();
+      Store.saveSettings(S);
+      oc2.fechar();
+      const linhas = ['<b>' + dados.songs.length + '</b> música(s) no ar.'];
+      linhas.push('Áudios: ' + r.enviadas + ' enviado(s), ' + r.jaEstavam + ' já estavam lá' +
+                  (r.removidas ? ', ' + r.removidas + ' antigo(s) removido(s)' : '') + '.');
+      if(r.semArquivo) linhas.push(r.semArquivo + ' faixa(s) não foram enviadas porque o arquivo não está neste aparelho.');
+      if(r.grandes) linhas.push(r.grandes + ' faixa(s) passam de 45 MB e o GitHub não aceita.');
+      avisoSheet('Enviado', linhas.join('<br>'));
+      if($('#ghStatus')) viewSettings();
+    }catch(e){
+      oc2.fechar();
+      erroOnline(new Error(e.message + ' O que já subiu fica guardado: é só enviar de novo que ele continua de onde parou.'));
+    }
+  });
+}
+
+/** HTML da seção Online em Ajustes */
+function onlineSecaoHTML(){
+  const repo = S.ghRepo || repoPadrao();
+  return '<div class="sep" style="margin:20px 0"></div>' +
+    '<h3 style="font-size:15px;margin:0 0 4px">Online (GitHub)</h3>' +
+    '<div class="switch"><span>Usar repertório online</span><input type="checkbox" id="cfgOnline"' + (S.online ? ' checked' : '') + '></div>' +
+    '<div id="onlineBox"' + (S.online ? '' : ' style="display:none"') + '>' +
+      '<div class="field"><label>Repositório</label>' +
+        '<input id="ghRepo" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="dono/repositorio" value="' + esc(repo) + '"></div>' +
+      '<button class="btn primary" id="ghDown" style="margin-bottom:9px">&#8681; Baixar do GitHub</button>' +
+      '<div class="hint" style="margin-bottom:16px">Quem só baixa não precisa de mais nada. O app continua guardando tudo ' +
+        'no aparelho, então depois de baixar funciona sem internet.</div>' +
+      '<div class="field"><label>Token — só pra quem envia</label>' +
+        '<input id="ghToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" ' +
+          'placeholder="github_pat_..." value="' + esc(S.ghToken || '') + '">' +
+        '<div class="hint">Crie em <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">' +
+          'GitHub → Fine-grained tokens</a>: acesso <b>só a este repositório</b>, permissão <b>Contents: Read and write</b>. ' +
+          'Fica guardado só neste aparelho e nunca entra nas exportações.</div></div>' +
+      '<button class="btn" id="ghUp" style="margin-bottom:9px">&#8679; Enviar para o GitHub</button>' +
+      '<div class="hint" id="ghStatus">' +
+        (S.ghBaixou ? 'Último download: ' + fmtDataHora(S.ghBaixou) + '. ' : '') +
+        (S.ghEnviou ? 'Último envio: ' + fmtDataHora(S.ghEnviou) + '. ' : '') +
+        'Enviar deixa o GitHub igual a este aparelho — cifras e áudios.</div>' +
+    '</div>';
+}
+
+function onlineLigar(){
+  $('#cfgOnline').onchange = (e) => {
+    S.online = e.target.checked;
+    if(S.online && !S.ghRepo) S.ghRepo = repoPadrao();
+    Store.saveSettings(S);
+    $('#onlineBox').style.display = S.online ? '' : 'none';
+  };
+  const pintarEnviar = () => {
+    const b = $('#ghUp'), tem = !!String(S.ghToken || '').trim();
+    b.disabled = !tem;
+    b.style.opacity = tem ? '' : '.45';
+  };
+  $('#ghRepo').oninput = (e) => { S.ghRepo = e.target.value.trim(); Store.saveSettings(S); };
+  $('#ghToken').oninput = (e) => { S.ghToken = e.target.value.trim(); Store.saveSettings(S); pintarEnviar(); };
+  $('#ghDown').onclick = () => onlineBaixar();
+  $('#ghUp').onclick = () => onlineEnviar();
+  pintarEnviar();
+}
 
 /* ---------------- atualização do app ---------------- */
 let regSW = null;
