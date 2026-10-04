@@ -79,7 +79,7 @@ function desenharRota(){
   if(a === 'new')            return viewEditor(null);
   if(a === 'edit'  && b)     return viewEditor(b);
   if(a === 'song'  && b)     return viewSong(b, q);
-  if(a === 'events')         return viewEvents();
+  if(a === 'events')         return viewEvents(b === 'arquivados');
   if(a === 'event' && b)     return viewEvent(b);
   if(a === 'settings')       return viewSettings();
   return viewList();
@@ -2000,7 +2000,7 @@ function songViewMenu(){
 }
 
 function addToEventSheet(songId){
-  const evs = Store.events();
+  const evs = Store.events().filter(e => !e.arquivado);
   sheet('<h3>Adicionar ao evento</h3>' +
     (evs.length
       ? evs.map(e => '<button class="opt" data-e="' + e.id + '"><i>&#9776;</i> ' + esc(e.name) +
@@ -2032,26 +2032,53 @@ document.addEventListener('visibilitychange', () => {
 /* =========================================================
    EVENTOS (setlists)
    ========================================================= */
-function viewEvents(){
-  const evs = Store.events();
+/** A lista de eventos; com `arquivados`, a dos que foram tirados dela (#/events/arquivados) */
+function viewEvents(arquivados){
+  const todos = Store.events();
+  const nArq = todos.filter(e => e.arquivado).length;
+  if(arquivados && !nArq){ go('#/events'); return; }          // desarquivou o último: volta pra lista
+  const evs = todos.filter(e => !!e.arquivado === !!arquivados);
   evs.sort((a,b) => (b.date || '').localeCompare(a.date || ''));
   APP.innerHTML =
-    '<header class="topbar"><div class="ttl"><b>Eventos</b>' +
-      '<small>Ordem das músicas pra tocar</small></div></header>' +
+    (arquivados
+      ? '<header class="topbar"><button class="iconbtn" id="back">&#8249;</button><div class="ttl"><b>Eventos arquivados</b>' +
+          '<small>' + nArq + (nArq === 1 ? ' evento' : ' eventos') + ' fora da lista</small></div></header>'
+      : '<header class="topbar"><div class="ttl"><b>Eventos</b>' +
+          '<small>Ordem das músicas pra tocar</small></div></header>') +
     '<div class="content">' +
       (evs.length ? evs.map(e =>
         '<div class="card" data-ev="' + e.id + '"><div class="info"><b>' + esc(e.name) + '</b>' +
         '<small>' + (e.date ? fmtDate(e.date) : 'sem data') + '</small></div>' +
         (e.privado ? '<span class="badge priv">particular</span>' : '') +
-        '<span class="badge num">' + (e.songs||[]).length + '</span></div>').join('')
+        (arquivados ? '<button class="tool" data-des="' + e.id + '">Desarquivar</button>'
+                    : '<span class="badge num">' + (e.songs||[]).length + '</span>') + '</div>').join('')
         : '<div class="empty"><div style="font-size:44px">&#9776;</div><h3>Nenhum evento</h3>' +
           '<p>Crie um evento e monte a ordem do repertório.</p></div>') +
+      (!arquivados && nArq ? '<button class="btn quieto" id="verArq">Arquivados (' + nArq + ') &#8250;</button>' : '') +
     '</div>' +
-    '<button class="fab" id="btnNewEv">+</button>' +
+    (arquivados ? '' : '<button class="fab" id="btnNewEv">+</button>') +
     tabbar('events');
   bindNav(APP);
   $$('[data-ev]').forEach(c => c.onclick = () => go('#/event/' + c.dataset.ev));
+  if(arquivados){
+    $('#back').onclick = () => { go('#/events'); };
+    $$('[data-des]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      arquivarEvento(Store.getEvent(b.dataset.des), false);
+      viewEvents(true);
+    });
+    return;
+  }
   $('#btnNewEv').onclick = () => newEventSheet();
+  if($('#verArq')) $('#verArq').onclick = () => go('#/events/arquivados');
+}
+
+/** Arquivar tira o evento da lista sem apagar nada; é um dado do evento, então sincroniza como o resto */
+function arquivarEvento(ev, sim){
+  if(!ev) return;
+  if(sim) ev.arquivado = true; else delete ev.arquivado;
+  Store.upsertEvent(ev);
+  toast(sim ? 'Evento arquivado' : 'Evento desarquivado');
 }
 
 function fmtDate(d){
@@ -2096,7 +2123,7 @@ function viewEvent(id){
       '<button class="iconbtn" id="back">&#8249;</button>' +
       '<div class="ttl"><b>' + esc(ev.name) + '</b><small>' +
         (ev.date ? fmtDate(ev.date) : '') + ' · ' + songs.length + ' música' + (songs.length===1?'':'s') +
-        (ev.privado ? ' · particular' : '') + '</small></div>' +
+        (ev.privado ? ' · particular' : '') + (ev.arquivado ? ' · arquivado' : '') + '</small></div>' +
       '<button class="iconbtn" id="evMenu">&#8942;</button>' +
     '</header>' +
     '<div class="content">' +
@@ -2120,7 +2147,7 @@ function viewEvent(id){
     tabbar('events');
 
   bindNav(APP);
-  $('#back').onclick = () => go('#/events');
+  $('#back').onclick = () => go(ev.arquivado ? '#/events/arquivados' : '#/events');
   $('#evMenu').onclick = () => eventMenu(ev);
   const st = $('#startEv');
   if(st) st.onclick = () => go('#/song/' + ev.songs[0] + '?ev=' + ev.id);
@@ -2278,7 +2305,10 @@ function eventMenu(ev){
     '<label class="switch" style="padding-top:2px"><span>Evento particular</span><input type="checkbox" id="enPriv"' + (ev.privado ? ' checked' : '') + '></label>' +
     '<div class="hint" style="margin:-6px 0 14px">Fica só neste aparelho: não vai pro repertório online e os outros membros não veem.</div>' +
     '<button class="btn primary" id="enOk" style="margin-bottom:9px">Salvar</button>' +
-    '<button class="btn danger" id="enDel">Excluir evento</button>',
+    '<button class="btn" id="enArq" style="margin-bottom:9px">' + (ev.arquivado ? 'Desarquivar evento' : 'Arquivar evento') + '</button>' +
+    '<button class="btn danger" id="enDel">Excluir evento</button>' +
+    (ev.arquivado ? '' : '<div class="hint" style="margin-top:10px">Arquivar tira o evento da lista sem apagar nada: ele fica em Eventos → Arquivados' +
+      (onlineConectado() && !ev.privado ? ', pra banda toda.' : '.') + '</div>'),
     (el) => {
       $('#enOk', el).onclick = () => {
         ev.name = $('#enName', el).value.trim() || ev.name;
@@ -2290,6 +2320,11 @@ function eventMenu(ev){
         if(priv && !ev.privado) Store.marcarApagado([ev.id]);
         if(priv) ev.privado = true; else delete ev.privado;
         Store.upsertEvent(ev); closeSheet(); viewEvent(ev.id);
+      };
+      $('#enArq', el).onclick = () => {
+        closeSheet();
+        if(ev.arquivado){ arquivarEvento(ev, false); viewEvent(ev.id); }
+        else { arquivarEvento(ev, true); go('#/events'); }
       };
       $('#enDel', el).onclick = () => {
         closeSheet();
