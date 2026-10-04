@@ -94,7 +94,9 @@ const Store = {
   },
 
   deleteEvent(id){
-    this.marcarApagado([id]);
+    // evento particular nunca saiu do aparelho: não há exclusão pra avisar a ninguém
+    const ev = this.getEvent(id);
+    if(!(ev && ev.privado)) this.marcarApagado([id]);
     this.saveEvents(this.events().filter(e => e.id !== id));
   },
 

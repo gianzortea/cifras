@@ -2042,6 +2042,7 @@ function viewEvents(){
       (evs.length ? evs.map(e =>
         '<div class="card" data-ev="' + e.id + '"><div class="info"><b>' + esc(e.name) + '</b>' +
         '<small>' + (e.date ? fmtDate(e.date) : 'sem data') + '</small></div>' +
+        (e.privado ? '<span class="badge priv">particular</span>' : '') +
         '<span class="badge num">' + (e.songs||[]).length + '</span></div>').join('')
         : '<div class="empty"><div style="font-size:44px">&#9776;</div><h3>Nenhum evento</h3>' +
           '<p>Crie um evento e monte a ordem do repertório.</p></div>') +
@@ -2065,12 +2066,15 @@ function newEventSheet(addSongId){
   sheet('<h3>Novo evento</h3>' +
     '<div class="field"><label>Nome</label><input id="evName" placeholder="Culto de domingo, Show no bar..."></div>' +
     '<div class="field"><label>Data</label><input id="evDate" type="date" value="' + today + '"></div>' +
+    '<label class="switch" style="padding-top:2px"><span>Evento particular</span><input type="checkbox" id="evPriv"></label>' +
+    '<div class="hint" style="margin:-6px 0 14px">Fica só neste aparelho: não vai pro repertório online e os outros membros não veem.</div>' +
     '<button class="btn primary" id="evOk">Criar</button>',
     (el) => {
       setTimeout(() => $('#evName', el).focus(), 80);
       $('#evOk', el).onclick = () => {
         const name = $('#evName', el).value.trim() || 'Evento';
         const ev = { id: uid(), name: name, date: $('#evDate', el).value, songs: addSongId ? [addSongId] : [], notes: '' };
+        if($('#evPriv', el).checked) ev.privado = true;
         Store.upsertEvent(ev);
         closeSheet();
         if(addSongId) toast('Criado e adicionada');
@@ -2091,7 +2095,8 @@ function viewEvent(id){
     '<header class="topbar">' +
       '<button class="iconbtn" id="back">&#8249;</button>' +
       '<div class="ttl"><b>' + esc(ev.name) + '</b><small>' +
-        (ev.date ? fmtDate(ev.date) : '') + ' · ' + songs.length + ' música' + (songs.length===1?'':'s') + '</small></div>' +
+        (ev.date ? fmtDate(ev.date) : '') + ' · ' + songs.length + ' música' + (songs.length===1?'':'s') +
+        (ev.privado ? ' · particular' : '') + '</small></div>' +
       '<button class="iconbtn" id="evMenu">&#8942;</button>' +
     '</header>' +
     '<div class="content">' +
@@ -2270,6 +2275,8 @@ function eventMenu(ev){
     '<div class="field"><label>Nome</label><input id="enName" value="' + esc(ev.name) + '"></div>' +
     '<div class="field"><label>Data</label><input id="enDate" type="date" value="' + esc(ev.date || '') + '"></div>' +
     '<div class="field"><label>Observações</label><input id="enNotes" value="' + esc(ev.notes || '') + '" placeholder="Ex.: começar acústico"></div>' +
+    '<label class="switch" style="padding-top:2px"><span>Evento particular</span><input type="checkbox" id="enPriv"' + (ev.privado ? ' checked' : '') + '></label>' +
+    '<div class="hint" style="margin:-6px 0 14px">Fica só neste aparelho: não vai pro repertório online e os outros membros não veem.</div>' +
     '<button class="btn primary" id="enOk" style="margin-bottom:9px">Salvar</button>' +
     '<button class="btn danger" id="enDel">Excluir evento</button>',
     (el) => {
@@ -2277,11 +2284,16 @@ function eventMenu(ev){
         ev.name = $('#enName', el).value.trim() || ev.name;
         ev.date = $('#enDate', el).value;
         ev.notes = $('#enNotes', el).value;
+        const priv = $('#enPriv', el).checked;
+        // virou particular depois de já ter sido publicado: registra a exclusão, que é o que
+        // tira a cópia do GitHub e dos outros aparelhos. Aqui ele continua, como particular.
+        if(priv && !ev.privado) Store.marcarApagado([ev.id]);
+        if(priv) ev.privado = true; else delete ev.privado;
         Store.upsertEvent(ev); closeSheet(); viewEvent(ev.id);
       };
       $('#enDel', el).onclick = () => {
         closeSheet();
-        confirmSheet('Excluir evento', (onlineConectado() ? 'O evento some pra banda toda. ' : '') + 'As músicas continuam salvas.', 'Excluir',
+        confirmSheet('Excluir evento', (onlineConectado() && !ev.privado ? 'O evento some pra banda toda. ' : '') + 'As músicas continuam salvas.', 'Excluir',
           () => { Store.deleteEvent(ev.id); go('#/events'); });
       };
     });
@@ -2562,7 +2574,8 @@ function onlineIO(diga){
   let foto = null;                      // como o aparelho estava quando o plano foi feito
   const agora = () => JSON.stringify([Store.songs(), Store.events(), Store.apagadas()]);
   return {
-    local: () => { foto = agora(); return { songs: Store.songs(), events: Store.events(), apagadas: Store.apagadas() }; },
+    // evento particular não entra na conversa com o GitHub: fica fora da mescla e do que sobe
+    local: () => { foto = agora(); return { songs: Store.songs(), events: Store.events().filter(e => !e.privado), apagadas: Store.apagadas() }; },
     jaTem: jaTemFaixa,
     guardarBlob: (id, blob) => Audio_DB.put(id, blob),
     blobDaFaixa: (id) => Audio_DB.get(id),
@@ -2577,12 +2590,24 @@ function onlineIO(diga){
         throw e;
       }
       res.songs.forEach(migrarAudio);
-      if(JSON.stringify([res.songs, res.events, res.apagadas]) === foto) return false;      // nada novo: não toca em nada
+      // devolve os eventos particulares ao lugar onde estavam (a mescla só viu os públicos)
+      const ids = new Set(res.songs.map(s => s.id)), publicos = new Map(res.events.map(e => [e.id, e]));
+      const eventos = [];
+      Store.events().forEach(e => {
+        if(e.privado){
+          const ficam = (e.songs || []).filter(id => ids.has(id));       // música removida do repertório sai do evento
+          eventos.push(ficam.length === (e.songs || []).length ? e : Object.assign({}, e, { songs: ficam }));
+          publicos.delete(e.id);       // alguém reviveu a versão pública antiga: aqui vale a particular
+        }
+        else if(publicos.has(e.id)){ eventos.push(publicos.get(e.id)); publicos.delete(e.id); }
+      });
+      publicos.forEach(e => eventos.push(e));
+      if(JSON.stringify([res.songs, eventos, res.apagadas]) === foto) return false;      // nada novo: não toca em nada
       Store.silencio = true;                 // gravar o que baixou não é "alteração do usuário"
       let gravou;
       try{
         gravou = Store.saveSongs(res.songs);
-        Store.saveEvents(res.events);
+        Store.saveEvents(eventos);
         Store.saveApagadas(res.apagadas);
       }finally{ Store.silencio = false; }
       // libera os arquivos de áudio que deixaram de ter dono — só se a lista gravou

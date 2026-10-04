@@ -71,6 +71,7 @@ a{color:var(--acc); text-decoration:none}
   background:var(--bg3); color:var(--fg2); border:1px solid var(--line); flex:0 0 auto;
 }
 .badge.key{color:var(--chord)}
+.badge.priv{color:var(--warn); border-color:var(--warn); background:transparent; font-weight:600}
 .badge.num{background:var(--acc); color:#fff; border-color:transparent; min-width:26px; text-align:center}
 .empty{text-align:center; color:var(--fg3); padding:56px 20px}
 .empty h3{color:var(--fg2); font-weight:600; margin:.4em 0}
