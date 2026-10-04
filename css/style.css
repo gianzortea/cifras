@@ -212,6 +212,13 @@ html[data-esp="minimo"] .cifra .sec{margin:.25em 0 0}
   background:rgba(123,216,143,.20);
   border-radius:5px; padding:0 1px; margin:0 -1px; cursor:grab; touch-action:none;
 }
+/* Área de toque maior que o desenho do acorde: um "E" tem ~10px de largura e o dedo
+   caía na letra, inserindo um acorde novo em vez de editar. A folga é invisível e
+   proporcional à fonte; pra baixo é menor, pra o meio da letra continuar inserindo. */
+.viewer.edit .cifra .ch::after{
+  content:''; position:absolute; touch-action:none;
+  top:min(-.5em, -8px); left:min(-.5em, -8px); right:min(-.5em, -8px); bottom:min(-.4em, -6px);
+}
 .viewer.edit .cifra .ch.drag{background:var(--acc); color:#fff; cursor:grabbing; z-index:5}
 .viewer.edit .cifra .lyr{border-bottom:1px dashed var(--line); cursor:text}
 .editbar{
