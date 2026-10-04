@@ -48,6 +48,43 @@ function ghBase64DeBytes(bytes){
 async function ghBase64DeBlob(blob){ return ghBase64DeBytes(new Uint8Array(await blob.arrayBuffer())); }
 function ghBase64DeTexto(txt){ return ghBase64DeBytes(new TextEncoder().encode(txt)); }
 
+/* O que é de cada aparelho e por isso não sobe pro GitHub nem conta como mudança:
+   tamanho de letra e colunas dependem da tela; tom e velocidade, de quem toca. */
+const GH_DO_APARELHO = ['fontSize', 'fitMode', 'fitScale', 'fitColsPref', 'transpose', 'scrollSpeed'];
+const GH_NAO_SOBE = GH_DO_APARELHO.concat(['trackAtiva', 'updatedAt']);
+
+/** A música como ela vai pro GitHub: só o conteúdo */
+function ghMusicaPublica(s){
+  const o = {};
+  for(const k in s) if(GH_NAO_SOBE.indexOf(k) < 0) o[k] = s[k];
+  o.editadoEm = +s.editadoEm || +s.updatedAt || +s.createdAt || 0;
+  return o;
+}
+
+/** JSON com as chaves em ordem: dois aparelhos com o mesmo conteúdo dão o mesmo texto */
+function ghEstavel(v){
+  if(Array.isArray(v)) return '[' + v.map(ghEstavel).join(',') + ']';
+  if(v && typeof v === 'object')
+    return '{' + Object.keys(v).sort().filter(k => v[k] !== undefined).map(k => JSON.stringify(k) + ':' + ghEstavel(v[k])).join(',') + '}';
+  return JSON.stringify(v === undefined ? null : v);
+}
+
+/**
+ * "Impressão digital" do repertório: igual entre dois lados se, e só se, o conteúdo
+ * é o mesmo. Ignora a ordem das listas e tudo que é de cada aparelho — sem isso,
+ * dois aparelhos ficariam se reenviando o mesmo repertório pra sempre.
+ */
+function ghAssinatura(d){
+  const porId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return ghEstavel({
+    s: (d.songs || []).map(ghMusicaPublica)
+        .map(m => Object.assign({}, m, { tracks: (m.tracks || []).slice().sort(porId) })).sort(porId),
+    e: (d.events || []).slice().sort(porId),
+    a: d.apagadas || {},
+    f: d.audioFiles || {}
+  });
+}
+
 function ghTodasFaixas(dados){
   const l = [];
   (dados.songs || []).forEach(s => (s.tracks || []).forEach(t => l.push(t)));
@@ -166,9 +203,12 @@ async function ghEnviar(cfg, dados, io){
     res.enviadas++;
   }
 
-  diga('Enviando as cifras...');
-  const saida = Object.assign({}, dados, { audios: {}, audioFiles: mapa });
-  try{
+  const saida = Object.assign({}, dados, { songs: (dados.songs || []).map(ghMusicaPublica), audios: {}, audioFiles: mapa });
+  // nada mudou em relação ao que já está lá: não gera um envio à toa
+  const igual = io.comparar !== undefined && io.comparar !== null && ghAssinatura(saida) === io.comparar;
+  if(igual){ res.semMudanca = true; res.versao = remoto.get(GH_JSON) || null; }
+  else try{
+    diga('Enviando as cifras...');
     // o sha diz ao GitHub qual versão está sendo substituída; se não for mais a atual, ele recusa
     res.versao = await ghGravar(cfg, GH_JSON, ghBase64DeTexto(JSON.stringify(saida)), remoto.get(GH_JSON) || null,
       'Repertório: ' + (dados.songs || []).length + ' música(s), ' + Object.keys(mapa).length + ' faixa(s)');
@@ -291,7 +331,12 @@ function ghMesclar(local, remoto, manter){
   [remoto.apagadas, local.apagadas].forEach(m => {
     for(const k in (m || {})) apag[k] = Math.max(apag[k] || 0, +m[k] || 0);
   });
-  const morto = (x) => !!apag[x.id] && apag[x.id] >= ghCarimbo(x);
+  // Música sem `editadoEm` nunca foi editada desde que as edições passaram a ser
+  // datadas: a data dela é um palpite (o `updatedAt` antigo andava até com o zoom).
+  // Palpite não vence edição nem exclusão registrada — senão um aparelho parado há
+  // semanas desfaria, só por ter mexido no zoom, a correção que outra pessoa publicou.
+  const palpite = (x, ehMusica) => ehMusica && !(+x.editadoEm > 0);
+  const morto = (x, ehMusica) => !!apag[x.id] && (palpite(x, ehMusica) || apag[x.id] >= ghCarimbo(x));
   const resumo = { novas: 0, atualizadas: 0, removidas: 0, minhasNovas: 0, minhasEdicoes: 0 };
 
   const juntar = (L, R, ehMusica) => {
@@ -301,25 +346,27 @@ function ghMesclar(local, remoto, manter){
       vistos.add(l.id);
       const r = doGitHub.get(l.id);
       if(!r){
-        if(morto(l)){ if(ehMusica) resumo.removidas++; }
+        if(morto(l, ehMusica)){ if(ehMusica) resumo.removidas++; }
         else { out.push(ghClone(l)); if(ehMusica) resumo.minhasNovas++; }
         continue;
       }
       const cl = ghCarimbo(l), cr = ghCarimbo(r);
-      if(apag[l.id] && apag[l.id] >= Math.max(cl, cr)){ if(ehMusica) resumo.removidas++; continue; }
+      const pl = palpite(l, ehMusica), pr = palpite(r, ehMusica);
+      if(apag[l.id] && apag[l.id] >= Math.max(pl ? 0 : cl, pr ? 0 : cr)){ if(ehMusica) resumo.removidas++; continue; }
+      const remotoVence = pl !== pr ? pl : cr > cl;
       let v;
-      if(cr > cl){
+      if(remotoVence){
         v = ghClone(r);
         manter.forEach(k => { if(l[k] !== undefined) v[k] = l[k]; });
         if(ehMusica) resumo.atualizadas++;
       } else {
         v = ghClone(l);
-        if(cl > cr && ehMusica) resumo.minhasEdicoes++;
+        if(ehMusica && (pl !== pr || cl > cr)) resumo.minhasEdicoes++;
       }
       if(ehMusica){
         // faixas de áudio: união dos dois lados. Perder uma gravação porque outra
         // pessoa mexeu na letra da mesma música seria o pior desfecho possível.
-        const outro = cr > cl ? l : r;
+        const outro = remotoVence ? l : r;
         v.tracks = (v.tracks || []).slice();
         const tem = new Set(v.tracks.map(t => t.id));
         (outro.tracks || []).forEach(t => { if(!tem.has(t.id)) v.tracks.push(ghClone(t)); });
@@ -330,7 +377,7 @@ function ghMesclar(local, remoto, manter){
       out.push(v);
     }
     for(const r of R){
-      if(vistos.has(r.id) || morto(r)) continue;
+      if(vistos.has(r.id) || morto(r, ehMusica)) continue;
       const v = ghClone(r);
       if(ehMusica){ v.tracks = (v.tracks || []).filter(t => !apag[t.id]); resumo.novas++; }
       out.push(v);
@@ -487,6 +534,7 @@ async function ghPlanejar(cfg, io, opt){
     faltam.push(t);
   }
   return { cfg: cfg, sha: sha, temRemoto: !!remoto, enviadoEm: remoto && remoto.exportedAt, resultado: resultado,
+           assinaturaRemota: remoto ? ghAssinatura(remoto) : null,
            arquivos: arquivos, faltam: faltam, bytesFaltam: faltam.reduce((a, t) => a + (t.size || 0), 0) };
 }
 
@@ -513,10 +561,25 @@ async function ghExecutar(plano, io, opt){
     }catch(e){ res.falharam++; }
   }
   diga('Guardando no aparelho...');
-  await io.salvar(plano.resultado);
-  if(opt.enviar){
+  res.mudouAqui = !!(await io.salvar(plano.resultado));
+
+  let enviar = opt.enviar === true;
+  if(opt.enviar === 'auto'){
+    // precisa enviar se o conteúdo difere do GitHub ou se há áudio daqui que ainda não subiu
+    const mapa = {};
+    let audioPendente = false;
+    for(const t of ghTodasFaixas(plano.resultado)){
+      if(plano.arquivos[t.id]){ mapa[t.id] = plano.arquivos[t.id]; continue; }
+      const b = await io.blobDaFaixa(t.id);
+      if(b && b.size <= GH_MAX_ARQUIVO) audioPendente = true;
+    }
+    const r = plano.resultado;
+    enviar = audioPendente || !plano.assinaturaRemota ||
+      ghAssinatura({ songs: r.songs, events: r.events, apagadas: r.apagadas, audioFiles: mapa }) !== plano.assinaturaRemota;
+  }
+  if(enviar){
     res.envio = await ghEnviar(cfg, io.empacotar(plano.resultado),
-      { blobDaFaixa: io.blobDaFaixa, progresso: diga, confereVersao: true, versaoEsperada: plano.sha });
+      { blobDaFaixa: io.blobDaFaixa, progresso: diga, confereVersao: true, versaoEsperada: plano.sha, comparar: plano.assinaturaRemota });
   }
   return res;
 }

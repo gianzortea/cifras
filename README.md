@@ -42,7 +42,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Gravar** | Botão **● Gravar** na cifra: grava pelo microfone ali mesmo, com a letra na tela, e ao parar salva como **mais uma faixa** (nunca substitui as que já existem). Barra com relógio e medidor de volume; continua visível no modo palco. Depois abre o recorte de início/fim. |
 | **Eventos** | Setlists ordenadas: reordene **arrastando pela alça ≡** ou pelos botões ▲▼. Dentro da cifra aparecem ‹ › pra pular pra próxima. |
 | **Backup** | Dois JSONs: **Exportar cifras** (leve, sem os áudios) e **Exportar com áudios** (embute os arquivos em base64, ~34% maior que a soma dos MP3 — o tamanho estimado aparece no botão). Importar oferece mesclar ou substituir. |
-| **Online (GitHub)** | Opcional, em Ajustes: o repertório (cifras, eventos **e áudios**) fica num repositório do GitHub. **Baixar** não precisa de nada. **Enviar** pede a **senha da banda**, digitada uma vez por aparelho — quem cuida do repertório define a senha a partir do token dele. Enviar sempre recebe e mescla antes, então ninguém apaga o trabalho de ninguém. Tudo manual, por botão, e o app continua funcionando offline. |
+| **Online (GitHub)** | Ligado por padrão: o repertório (cifras, eventos **e áudios**) fica num repositório do GitHub. Quem abre o app sem ter entrado vê um aviso: **Entrar** (pede a **senha da banda**, uma vez por aparelho) ou **Continuar offline**. Depois de entrar é tudo automático: o app baixa as novidades ao abrir e **publica sozinho** o que for alterado, sempre mesclando antes — ninguém apaga o trabalho de ninguém. Tudo continua guardado no aparelho e funciona sem internet. Dá pra desligar em Ajustes. |
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
 | **Zoom** | Pinça com dois dedos em **qualquer modo**, inclusive *caber na tela* (no computador: Ctrl + roda ou pinça no trackpad). É uma lupa: amplia sem refazer o layout, então voltar ao 100% (no botão `150% ✕`) deixa tudo exatamente como estava. |
 
@@ -105,23 +105,40 @@ cifras.json            o mesmo JSON do exportar/importar, + audioFiles {idDaFaix
 audio/<idDaFaixa>.ext  um arquivo por faixa
 ```
 
-**Baixar** (qualquer pessoa): lê o `cifras.json`, mostra quantas músicas e quantos
-MB de áudio faltam, e pergunta *mesclar* ou *substituir*. Só baixa os áudios que o
-aparelho ainda não tem. Ao mesclar, o aparelho mantém o que é dele: tamanho de
-letra, colunas e — pra quem só lê — o tom que escolheu.
+**Quem não entrou** (offline): a cada abertura do app aparece o aviso "Repertório
+da banda" com *Entrar* e *Continuar offline*, e a lista ganha uma faixa "Offline"
+com o botão Entrar. Nada vai nem vem do GitHub. Com o online desligado em Ajustes
+não há aviso nenhum.
 
-**Enviar** (quem tem token): o repositório passa a espelhar o aparelho. A ordem é
-áudios → JSON → limpeza dos áudios sem uso, pra quem baixar no meio nunca receber
-um JSON apontando pra áudio que ainda não subiu; e um envio interrompido continua
-de onde parou. Se o GitHub tem uma versão que este aparelho não conhece (enviada de
-outro aparelho), o app avisa antes de sobrescrever.
+**Quem entrou** sincroniza sozinho. Uma sincronia é: ler o GitHub → juntar com o
+aparelho → baixar os áudios que faltam → gravar no aparelho → publicar, se houver
+o que publicar. Ela roda ao abrir o app, ~4 s depois de qualquer alteração, ao sair
+de uma cifra, ao voltar pro app depois de 2 minutos e quando a internet volta.
+**Com uma cifra aberta não roda nunca** — nem rede, nem tela mudando no meio da
+música; o que foi alterado ali (edição, gravação) sobe ao sair. O estado aparece
+ao lado do número de músicas: *sincronizando… / ✓ sincronizado / sem internet*.
+
+**Só publica quando o conteúdo muda.** O que sobe é a música sem os ajustes do
+aparelho (`ghMusicaPublica`), e antes de enviar o app compara uma impressão
+digital do repertório (`ghAssinatura`: chaves e listas em ordem fixa) com a do
+GitHub. Sem isso, dois aparelhos ficariam se reenviando o mesmo repertório pra
+sempre, e mexer no zoom geraria um envio.
+
+**Publicar**: a ordem é áudios → JSON → limpeza dos áudios sem uso, pra quem baixar
+no meio nunca receber um JSON apontando pra áudio que ainda não subiu; e um envio
+interrompido continua de onde parou na sincronia seguinte.
+
+**Consequências do automático** que a tela avisa: excluir uma música (ou evento)
+estando conectado exclui pra banda toda; "Apagar tudo" limpa só o aparelho, e o
+repertório volta na sincronia seguinte. Token cancelado no GitHub → o aparelho
+volta a ser offline e é convidado a entrar de novo.
 
 ### Várias pessoas editando
 
 **Senha da banda.** Pra gravar no GitHub é preciso uma credencial. O token de quem
 cuida do repertório fica no próprio repositório (`acesso.json`), cifrado com a
 senha (PBKDF2-SHA256, 600 mil rodadas → AES-GCM). Quem digita a senha certa
-recupera o token e o aparelho passa a poder enviar.
+recupera o token e o aparelho passa a sincronizar.
 
 O arquivo é público, então a senha é a única barreira e pode ser testada sem
 limite de tentativas. Por isso ela tem tamanho mínimo: medido num PC de 12
@@ -130,18 +147,21 @@ app recusa senha fraca. Tirar o acesso de alguém não é trocar a senha — é 
 outro token, apagar o antigo no GitHub e publicar senha nova (o arquivo antigo
 continua no histórico do git, cifrado com a senha antiga).
 
-**Mescla.** Enviar = ler o GitHub → juntar → baixar os áudios que faltam → gravar
-no aparelho → enviar. Por música vale a edição mais recente (`editadoEm`, que só
+**Mescla.** Por música vale a edição mais recente (`editadoEm`, que só
 anda quando o *conteúdo* muda — mexer em zoom ou tom não conta). As faixas de áudio
 são unidas dos dois lados: ninguém perde uma gravação porque outro corrigiu a letra.
+Música que nunca teve edição datada (cópia de antes do `editadoEm`) tem data só
+estimada, e data estimada não vence edição nem exclusão datada: um aparelho
+parado há semanas não desfaz, por ter mexido no zoom, a correção que alguém publicou.
 
 **Exclusões** ficam num registro (`apagadas: {id: quando}`) que viaja no JSON.
 Sem ele, a música que um apagou voltaria na sincronia do outro. Aparelho zerado
 não tem registro, então recebe tudo de volta em vez de apagar o repertório.
 
 **Corrida.** O envio informa ao GitHub qual versão está substituindo. Se outra
-pessoa enviou no meio, o GitHub recusa e o app pede pra enviar de novo — aí ele
-mescla com a versão nova.
+pessoa publicou no meio, o GitHub recusa e o app refaz a sincronia sozinho (até 3
+vezes), mesclando com a versão nova. O mesmo vale se o próprio aparelho mudou
+enquanto a sincronia falava com o GitHub: ela recomeça em vez de gravar por cima.
 
 **O que é de cada aparelho** e nunca vem de fora numa música que já existe:
 tamanho de letra, colunas, tom e velocidade da rolagem. Pra mudar o tom de todo
@@ -157,6 +177,9 @@ Detalhes que custaram descobrir:
   vêm de `raw.githubusercontent.com`, que não conta nesse limite.
 - **O token nunca sai do aparelho**: fica fora de toda exportação e do JSON
   enviado (`settingsParaExportar`). O repositório é público, então isso importa.
+- **Testes nunca escrevem no repositório de dados de verdade.** `cifras-dados` é
+  o repertório real da banda; a sincronia é testada com um GitHub simulado no
+  navegador (`fetch` trocado por um repositório em memória).
 - Tetos do GitHub: arquivo de até ~45 MB pela API e repositório recomendado
   abaixo de 1 GB — umas 250 faixas de 4 minutos a ~1 MB por minuto.
 

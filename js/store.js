@@ -35,20 +35,20 @@ const DEFAULT_SETTINGS = {
   keepAwake: true,
   showChords: true,
   spacing: 'compacto',   // normal | compacto | minimo
-  online: false,         // repertório no GitHub (js/online.js)
+  usarOnline: true,      // repertório no GitHub (js/online.js) — ligado por padrão
   ghRepo: '',            // "dono/repositorio"
   ghToken: '',           // só neste aparelho; NUNCA entra em exportação
-  ghBaixou: 0, ghEnviou: 0, ghVersao: null,
+  ghSinc: 0,             // última sincronização que deu certo
 
   notation: 'en'   // 'en' = C D E | 'pt' = Dó Ré Mi (só exibição do tom)
 };
 
 const Store = {
   songs(){ return readLS(LS.songs, []).map(migrarAudio); },
-  saveSongs(list){ return writeLS(LS.songs, list); },
+  saveSongs(list){ const ok = writeLS(LS.songs, list); avisarMudanca(); return ok; },
 
   events(){ return readLS(LS.events, []); },
-  saveEvents(list){ return writeLS(LS.events, list); },
+  saveEvents(list){ const ok = writeLS(LS.events, list); avisarMudanca(); return ok; },
 
   settings(){ return Object.assign({}, DEFAULT_SETTINGS, readLS(LS.settings, {})); },
   saveSettings(s){ return writeLS(LS.settings, s); },
@@ -101,13 +101,20 @@ const Store = {
   /* Registro de exclusões. Sem ele, o que foi apagado aqui voltaria na próxima
      sincronia, porque o outro aparelho (ou o GitHub) ainda tem a música. */
   apagadas(){ return readLS(LS.apagadas, {}); },
-  saveApagadas(m){ return writeLS(LS.apagadas, m || {}); },
+  saveApagadas(m){ const ok = writeLS(LS.apagadas, m || {}); avisarMudanca(); return ok; },
   marcarApagado(ids){
     const m = this.apagadas(), agora = Date.now();
     (ids || []).forEach(id => { if(id) m[id] = agora; });
     this.saveApagadas(m);
   }
 };
+
+/* Quem quiser saber que os dados mudaram (a sincronia) pendura uma função em
+   Store.aoMudar. Store.silencio = true cala o aviso — a própria sincronia usa isso
+   ao gravar o que baixou, senão ela dispararia a si mesma pra sempre. */
+function avisarMudanca(){
+  if(!Store.silencio && typeof Store.aoMudar === 'function') Store.aoMudar();
+}
 
 /** O que conta como conteúdo da música (o que os outros recebem ao sincronizar) */
 function assinaturaConteudo(s){
@@ -119,7 +126,7 @@ function assinaturaConteudo(s){
     o JSON exportado vai pra WhatsApp, e-mail e — no modo online — pra um repositório público. */
 function settingsParaExportar(){
   const s = Store.settings();
-  ['ghToken', 'ghRepo', 'online', 'ghBaixou', 'ghEnviou', 'ghVersao'].forEach(k => { delete s[k]; });
+  ['ghToken', 'ghRepo', 'online', 'usarOnline', 'ghSinc', 'ghBaixou', 'ghEnviou', 'ghVersao'].forEach(k => { delete s[k]; });
   return s;
 }
 
