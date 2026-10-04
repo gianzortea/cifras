@@ -7,7 +7,8 @@
 const LS = {
   songs:    'cifras.songs.v1',
   events:   'cifras.events.v1',
-  settings: 'cifras.settings.v1'
+  settings: 'cifras.settings.v1',
+  apagadas: 'cifras.apagadas.v1'      // {id: quando} — exclusões, pra sincronia entre aparelhos
 };
 
 function uid(){
@@ -56,8 +57,14 @@ const Store = {
 
   upsertSong(song){
     const list = this.songs();
-    song.updatedAt = Date.now();
     const i = list.findIndex(s => s.id === song.id);
+    const agora = Date.now();
+    // editadoEm só anda quando o CONTEÚDO muda. Mexer no zoom ou no tom não pode
+    // fazer a cópia deste aparelho parecer "mais nova" que a edição de outra pessoa.
+    if(i < 0) song.editadoEm = song.editadoEm || agora;
+    else if(assinaturaConteudo(list[i]) !== assinaturaConteudo(song)) song.editadoEm = agora;
+    else song.editadoEm = list[i].editadoEm || list[i].updatedAt || agora;
+    song.updatedAt = agora;
     if(i >= 0) list[i] = song; else list.unshift(song);
     this.saveSongs(list);
     return song;
@@ -67,6 +74,7 @@ const Store = {
     // pega as faixas ANTES de tirar a música da lista — depois não há mais de onde ler
     const alvo = this.getSong(id);
     const faixas = (alvo && alvo.tracks) || [];
+    this.marcarApagado([id].concat(faixas.map(t => t.id)));
     this.saveSongs(this.songs().filter(s => s.id !== id));
     const evs = this.events().map(e => ({...e, songs: (e.songs||[]).filter(x => x !== id)}));
     this.saveEvents(evs);
@@ -85,8 +93,27 @@ const Store = {
     return ev;
   },
 
-  deleteEvent(id){ this.saveEvents(this.events().filter(e => e.id !== id)); }
+  deleteEvent(id){
+    this.marcarApagado([id]);
+    this.saveEvents(this.events().filter(e => e.id !== id));
+  },
+
+  /* Registro de exclusões. Sem ele, o que foi apagado aqui voltaria na próxima
+     sincronia, porque o outro aparelho (ou o GitHub) ainda tem a música. */
+  apagadas(){ return readLS(LS.apagadas, {}); },
+  saveApagadas(m){ return writeLS(LS.apagadas, m || {}); },
+  marcarApagado(ids){
+    const m = this.apagadas(), agora = Date.now();
+    (ids || []).forEach(id => { if(id) m[id] = agora; });
+    this.saveApagadas(m);
+  }
 };
+
+/** O que conta como conteúdo da música (o que os outros recebem ao sincronizar) */
+function assinaturaConteudo(s){
+  return JSON.stringify([s.title, s.artist, s.key, s.capo || 0, s.notes || '', s.scrollMode || '', s.scrollDuration || 0,
+    s.lines, (s.tracks || []).map(t => [t.id, t.name, t.start || 0, t.end || 0])]);
+}
 
 /** Ajustes que podem sair do aparelho. O token e o estado da sincronia ficam de fora:
     o JSON exportado vai pra WhatsApp, e-mail e — no modo online — pra um repositório público. */

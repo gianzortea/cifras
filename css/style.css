@@ -367,6 +367,14 @@ html[data-esp="minimo"] .cifra .sec{margin:.25em 0 0}
   padding:10px 16px; border-radius:11px; font-size:13.5px; box-shadow:0 6px 20px rgba(0,0,0,.35);
   animation:up .18s ease;
 }
+/* modo online */
+.okbox{
+  background:rgba(23,133,63,.10); border:1px solid var(--acc2); color:var(--acc2);
+  border-radius:12px; padding:10px 12px; font-size:13.5px; font-weight:600; margin-bottom:10px;
+}
+details.avancado{border:1px solid var(--line); border-radius:12px; padding:10px 12px}
+details.avancado summary{font-size:13px; color:var(--fg2); cursor:pointer; font-weight:600}
+
 /* aviso de nova versao */
 #updBar{
   position:fixed; left:12px; right:12px; bottom:calc(70px + var(--safe-b));

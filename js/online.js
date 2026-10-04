@@ -143,6 +143,10 @@ async function ghEnviar(cfg, dados, io){
   const diga = io.progresso || function(){};
   diga('Lendo o repositório...');
   const remoto = await ghListar(cfg);
+  // Quem sincroniza mesclou com UMA versão do GitHub. Se outra pessoa enviou depois
+  // disso, gravar por cima apagaria o trabalho dela: para e pede pra sincronizar de novo.
+  const mudou = () => new GHErro('Outra pessoa enviou enquanto você sincronizava. Toque em Enviar de novo: o app junta as duas versões.', 409);
+  if(io.confereVersao && (remoto.get(GH_JSON) || null) !== (io.versaoEsperada || null)) throw mudou();
 
   const faixas = ghTodasFaixas(dados);
   const mapa = {};                       // idDaFaixa -> caminho no repositório
@@ -164,8 +168,14 @@ async function ghEnviar(cfg, dados, io){
 
   diga('Enviando as cifras...');
   const saida = Object.assign({}, dados, { audios: {}, audioFiles: mapa });
-  res.versao = await ghGravar(cfg, GH_JSON, ghBase64DeTexto(JSON.stringify(saida)), remoto.get(GH_JSON) || null,
-    'Repertório: ' + (dados.songs || []).length + ' música(s), ' + Object.keys(mapa).length + ' faixa(s)');
+  try{
+    // o sha diz ao GitHub qual versão está sendo substituída; se não for mais a atual, ele recusa
+    res.versao = await ghGravar(cfg, GH_JSON, ghBase64DeTexto(JSON.stringify(saida)), remoto.get(GH_JSON) || null,
+      'Repertório: ' + (dados.songs || []).length + ' música(s), ' + Object.keys(mapa).length + ' faixa(s)');
+  }catch(e){
+    if(io.confereVersao && (e.status === 409 || e.status === 422)) throw mudou();
+    throw e;
+  }
 
   // áudios que não pertencem mais a nenhuma música
   const emUso = new Set(Object.keys(mapa).map(k => mapa[k]));
@@ -199,7 +209,9 @@ async function ghBaixarJson(cfg){
   if(r.status === 404){
     const rr = await ghChamar(cfg, '/repos/' + cfg.repo);
     if(!rr.ok) throw await ghFalha(rr, 'abrir o repositório');
-    throw new GHErro('Esse repositório ainda não tem repertório. Alguém precisa enviar primeiro.', 404);
+    const e = new GHErro('Esse repositório ainda não tem repertório. Alguém precisa enviar primeiro.', 404);
+    e.semRepertorio = true;
+    throw e;
   }
   if(!r.ok) throw await ghFalha(r, 'baixar o repertório');
   let dados;
@@ -253,4 +265,258 @@ async function ghFaltamBaixar(dados, jaTem){
     n++; bytes += (t.size || 0);
   }
   return { faixas: n, bytes: bytes };
+}
+
+/* =========================================================
+   VÁRIAS PESSOAS EDITANDO
+   ========================================================= */
+
+/** Quando o CONTEÚDO da música mudou pela última vez (zoom e afins não contam) */
+function ghCarimbo(x){ return +x.editadoEm || +x.updatedAt || +x.createdAt || 0; }
+function ghClone(x){ return JSON.parse(JSON.stringify(x)); }
+
+/**
+ * Junta o repertório deste aparelho com o do GitHub, sem ninguém apagar o trabalho
+ * de ninguém. Por música: vale a edição mais recente. `apagadas` {id: quando} é o
+ * registro de exclusões — sem ele, o que um apagou voltaria na sincronia do outro.
+ *
+ *   local, remoto   { songs, events, apagadas }
+ *   manter          campos que são de cada aparelho (tamanho de letra, tom...) e
+ *                   por isso nunca vêm de fora numa música que já existe aqui
+ * devolve { songs, events, apagadas, resumo }
+ */
+function ghMesclar(local, remoto, manter){
+  manter = manter || [];
+  const apag = {};
+  [remoto.apagadas, local.apagadas].forEach(m => {
+    for(const k in (m || {})) apag[k] = Math.max(apag[k] || 0, +m[k] || 0);
+  });
+  const morto = (x) => !!apag[x.id] && apag[x.id] >= ghCarimbo(x);
+  const resumo = { novas: 0, atualizadas: 0, removidas: 0, minhasNovas: 0, minhasEdicoes: 0 };
+
+  const juntar = (L, R, ehMusica) => {
+    const doGitHub = new Map(R.map(x => [x.id, x]));
+    const vistos = new Set(), out = [];
+    for(const l of L){
+      vistos.add(l.id);
+      const r = doGitHub.get(l.id);
+      if(!r){
+        if(morto(l)){ if(ehMusica) resumo.removidas++; }
+        else { out.push(ghClone(l)); if(ehMusica) resumo.minhasNovas++; }
+        continue;
+      }
+      const cl = ghCarimbo(l), cr = ghCarimbo(r);
+      if(apag[l.id] && apag[l.id] >= Math.max(cl, cr)){ if(ehMusica) resumo.removidas++; continue; }
+      let v;
+      if(cr > cl){
+        v = ghClone(r);
+        manter.forEach(k => { if(l[k] !== undefined) v[k] = l[k]; });
+        if(ehMusica) resumo.atualizadas++;
+      } else {
+        v = ghClone(l);
+        if(cl > cr && ehMusica) resumo.minhasEdicoes++;
+      }
+      if(ehMusica){
+        // faixas de áudio: união dos dois lados. Perder uma gravação porque outra
+        // pessoa mexeu na letra da mesma música seria o pior desfecho possível.
+        const outro = cr > cl ? l : r;
+        v.tracks = (v.tracks || []).slice();
+        const tem = new Set(v.tracks.map(t => t.id));
+        (outro.tracks || []).forEach(t => { if(!tem.has(t.id)) v.tracks.push(ghClone(t)); });
+        v.tracks = v.tracks.filter(t => !apag[t.id]);
+        const ativa = [l.trackAtiva, v.trackAtiva].find(id => v.tracks.some(t => t.id === id));
+        v.trackAtiva = ativa || (v.tracks[0] ? v.tracks[0].id : null);
+      }
+      out.push(v);
+    }
+    for(const r of R){
+      if(vistos.has(r.id) || morto(r)) continue;
+      const v = ghClone(r);
+      if(ehMusica){ v.tracks = (v.tracks || []).filter(t => !apag[t.id]); resumo.novas++; }
+      out.push(v);
+    }
+    return out;
+  };
+
+  const songs = juntar(local.songs || [], remoto.songs || [], true);
+  const ids = new Set(songs.map(s => s.id));
+  const events = juntar(local.events || [], remoto.events || [], false)
+    .map(e => Object.assign(e, { songs: (e.songs || []).filter(id => ids.has(id)) }));
+  return { songs: songs, events: events, apagadas: apag, resumo: resumo };
+}
+
+/** "Substituir tudo": o aparelho vira cópia do GitHub (só os ajustes de tela ficam) */
+function ghEspelhar(local, remoto, manter){
+  const meus = new Map((local.songs || []).map(s => [s.id, s]));
+  const songs = (remoto.songs || []).map(r => {
+    const v = ghClone(r), l = meus.get(r.id);
+    if(l) (manter || []).forEach(k => { if(l[k] !== undefined) v[k] = l[k]; });
+    return v;
+  });
+  return { songs: songs, events: ghClone(remoto.events || []), apagadas: ghClone(remoto.apagadas || {}),
+           resumo: { novas: songs.length, atualizadas: 0, removidas: 0, minhasNovas: 0, minhasEdicoes: 0 } };
+}
+
+/* ---------- senha da banda ----------
+   O token de quem mantém o repertório fica no repositório, cifrado com a senha.
+   Como o arquivo é público, a senha é a ÚNICA barreira e pode ser testada sem
+   limite de tentativas no computador de qualquer um — por isso ela precisa ser
+   longa, e a derivação da chave é lenta de propósito. */
+const GH_ACESSO = 'acesso.json';
+const GH_RODADAS = 600000;
+
+function ghB64(bytes){ return ghBase64DeBytes(new Uint8Array(bytes)); }
+function ghDeB64(txt){
+  const bin = atob(txt), b = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+  return b;
+}
+function ghSenhaLimpa(s){ return String(s || '').normalize('NFKC').trim().replace(/\s+/g, ' '); }
+
+/** A senha aguenta alguém tentando adivinhar? { ok, motivo, bits } */
+function ghSenhaForte(senha){
+  const s = ghSenhaLimpa(senha);
+  let alfabeto = 0;
+  if(/[a-z]/.test(s)) alfabeto += 26;
+  if(/[A-Z]/.test(s)) alfabeto += 26;
+  if(/[0-9]/.test(s)) alfabeto += 10;
+  if(/[^A-Za-z0-9]/.test(s)) alfabeto += 20;
+  const bits = Math.round(s.length * Math.log2(alfabeto || 1));
+  const fracas = ['12345678', '123456789', '1234567890', 'password', 'senha123', 'qwertyui', 'abcdefgh', '11111111', 'cifras123', 'igreja123'];
+  let motivo = '';
+  if(s.length < 8) motivo = 'Muito curta: use pelo menos 8 caracteres.';
+  else if(/^(.)\1+$/.test(s)) motivo = 'Um caractere repetido não é senha.';
+  else if(fracas.indexOf(s.toLowerCase()) >= 0) motivo = 'Essa é das primeiras que alguém tentaria.';
+  else if(bits < 40) motivo = /^[0-9]+$/.test(s)
+    ? 'Só números precisa de pelo menos 12 dígitos. Melhor misturar letras, ou usar uma frase.'
+    : 'Ainda fraca: aumente, misture letras e números, ou use uma frase de 3 ou 4 palavras.';
+  return { ok: !motivo, motivo: motivo, bits: bits };
+}
+
+async function ghChave(senha, sal, rodadas){
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(ghSenhaLimpa(senha)), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: sal, iterations: rodadas, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+async function ghCifrarToken(token, senha){
+  const sal = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const dado = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, await ghChave(senha, sal, GH_RODADAS), new TextEncoder().encode(token));
+  return { v: 1, kdf: 'PBKDF2-SHA256', rodadas: GH_RODADAS, sal: ghB64(sal), iv: ghB64(iv), dado: ghB64(dado) };
+}
+
+async function ghDecifrarToken(pacote, senha){
+  try{
+    const claro = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ghDeB64(pacote.iv) },
+      await ghChave(senha, ghDeB64(pacote.sal), +pacote.rodadas || GH_RODADAS), ghDeB64(pacote.dado));
+    return new TextDecoder().decode(claro);
+  }catch(e){
+    throw new GHErro('Senha incorreta.', 401);       // AES-GCM confere a integridade: senha errada não decifra
+  }
+}
+
+/** Quem tem o token publica a senha da banda */
+async function ghPublicarAcesso(cfg, senha){
+  const forca = ghSenhaForte(senha);
+  if(!forca.ok) throw new GHErro(forca.motivo, 0);
+  if(!cfg.token) throw new GHErro('Só quem já tem acesso de envio pode definir a senha.', 401);
+  const pacote = await ghCifrarToken(cfg.token, senha);
+  const remoto = await ghListar(cfg);
+  await ghGravar(cfg, GH_ACESSO, ghBase64DeTexto(JSON.stringify(pacote)), remoto.get(GH_ACESSO) || null, 'Atualiza a senha da banda');
+}
+
+async function ghRemoverAcesso(cfg){
+  const remoto = await ghListar(cfg);
+  if(remoto.has(GH_ACESSO)) await ghApagar(cfg, GH_ACESSO, remoto.get(GH_ACESSO), 'Remove a senha da banda');
+}
+
+/** O repertório tem senha da banda publicada? */
+async function ghTemAcesso(cfg){
+  return (await ghListar(cfg)).has(GH_ACESSO);
+}
+
+/** Membro da banda: troca a senha pelo token. Devolve o token ou lança GHErro. */
+async function ghEntrarComSenha(repo, senha){
+  const cfg = { repo: repo };
+  let r = await ghChamar(cfg, '/repos/' + repo + '/contents/' + GH_ACESSO, { headers: { 'Accept': 'application/vnd.github.raw' } });
+  if(!r.ok && (r.status === 403 || r.status === 429)){
+    try{ r = await fetch(GH_RAW + '/' + repo + '/HEAD/' + GH_ACESSO + '?t=' + Date.now(), { cache: 'no-store' }); }
+    catch(e){ throw new GHErro('Sem conexão com o GitHub. Confira a internet.', 0); }
+  }
+  if(r.status === 404) throw new GHErro('Esse repertório ainda não tem senha da banda. Peça pra quem cuida dele definir uma.', 404);
+  if(!r.ok) throw await ghFalha(r, 'buscar o acesso');
+  let pacote;
+  try{ pacote = JSON.parse(await r.text()); }catch(e){ throw new GHErro('O arquivo de acesso está corrompido.', 0); }
+  return ghDecifrarToken(pacote, senha);
+}
+
+/* ---------- sincronizar: planejar (sem efeito nenhum) e executar ---------- */
+
+/**
+ * Lê o GitHub e calcula o que vai acontecer, sem mudar nada. A tela usa isso pra
+ * pedir confirmação com números de verdade.
+ *   io.local()            -> { songs, events, apagadas }
+ *   io.jaTem(faixa)       -> async bool
+ *   opt { substituir, manter }
+ */
+async function ghPlanejar(cfg, io, opt){
+  opt = opt || {};
+  let sha = null, remoto = null;
+  if(cfg.token){
+    // pelo sha: garante que o conteúdo lido é exatamente a versão que o envio vai substituir
+    sha = (await ghListar(cfg)).get(GH_JSON) || null;
+    if(sha){
+      const r = await ghChamar(cfg, '/repos/' + cfg.repo + '/git/blobs/' + sha, { headers: { 'Accept': 'application/vnd.github.raw' } });
+      if(!r.ok) throw await ghFalha(r, 'baixar o repertório');
+      try{ remoto = JSON.parse(await r.text()); }
+      catch(e){ throw new GHErro('O arquivo do GitHub está corrompido (não é um JSON válido).', 0); }
+    }
+  } else {
+    try{ remoto = (await ghBaixarJson(cfg)).dados; }
+    catch(e){ if(!e.semRepertorio) throw e; }
+  }
+  const local = io.local();
+  const vazio = { songs: [], events: [], apagadas: {} };
+  const resultado = opt.substituir ? ghEspelhar(local, remoto || vazio, opt.manter)
+                                   : ghMesclar(local, remoto || vazio, opt.manter);
+  const arquivos = (remoto && remoto.audioFiles) || {};
+  const faltam = [];
+  for(const t of ghTodasFaixas(resultado)){
+    if(!arquivos[t.id]) continue;
+    if(await io.jaTem(t)) continue;
+    faltam.push(t);
+  }
+  return { cfg: cfg, sha: sha, temRemoto: !!remoto, enviadoEm: remoto && remoto.exportedAt, resultado: resultado,
+           arquivos: arquivos, faltam: faltam, bytesFaltam: faltam.reduce((a, t) => a + (t.size || 0), 0) };
+}
+
+/**
+ * Executa o plano: baixa os áudios que faltam, grava no aparelho e (se pedido) envia.
+ *   io.guardarBlob(id, blob), io.salvar(resultado), io.blobDaFaixa(id),
+ *   io.empacotar(resultado) -> objeto no formato do exportar, io.progresso(texto)
+ */
+async function ghExecutar(plano, io, opt){
+  opt = opt || {};
+  const cfg = plano.cfg, diga = io.progresso || function(){};
+  const res = { baixadas: 0, falharam: 0, envio: null };
+  let n = 0;
+  for(const t of plano.faltam){
+    n++;
+    diga('Baixando áudio ' + n + ' de ' + plano.faltam.length + '...');
+    try{
+      const r = cfg.token
+        ? await ghChamar(cfg, '/repos/' + cfg.repo + '/contents/' + plano.arquivos[t.id], { headers: { 'Accept': 'application/vnd.github.raw' } })
+        : await fetch(GH_RAW + '/' + cfg.repo + '/HEAD/' + plano.arquivos[t.id]);
+      if(!r.ok){ res.falharam++; continue; }
+      await io.guardarBlob(t.id, new Blob([await r.arrayBuffer()], { type: t.type || 'application/octet-stream' }));
+      res.baixadas++;
+    }catch(e){ res.falharam++; }
+  }
+  diga('Guardando no aparelho...');
+  await io.salvar(plano.resultado);
+  if(opt.enviar){
+    res.envio = await ghEnviar(cfg, io.empacotar(plano.resultado),
+      { blobDaFaixa: io.blobDaFaixa, progresso: diga, confereVersao: true, versaoEsperada: plano.sha });
+  }
+  return res;
 }

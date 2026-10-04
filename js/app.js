@@ -1592,6 +1592,7 @@ function audioSheet(){
         '"' + fx.name + '" será apagada deste aparelho. As outras faixas ficam.', 'Remover', async () => {
           if(V.audioEl){ try{ V.audioEl.pause(); }catch(e){} }
           await Audio_DB.del(fx.id);
+          Store.marcarApagado([fx.id]);                // senão a faixa volta na próxima sincronia
           s.tracks = s.tracks.filter(t => t.id !== fx.id);
           s.trackAtiva = s.tracks.length ? s.tracks[0].id : null;
           Store.upsertSong(s);
@@ -1845,6 +1846,7 @@ function songViewMenu(){
     '<button class="opt" data-a="edit"><i>&#9998;</i> Editar texto da cifra</button>' +
     '<button class="opt" data-a="dg"><i>&#9648;</i> Acordes da música (desenhos)</button>' +
     '<button class="opt" data-a="chords"><i>&#9834;</i> ' + (S.showChords ? 'Esconder acordes (só letra)' : 'Mostrar acordes') + '</button>' +
+    (s.transpose ? '<button class="opt" data-a="fixar"><i>&#9835;</i> Fixar o tom ' + esc(keyOf(s)) + ' como o tom da música</button>' : '') +
     '<button class="opt" data-a="simplify"><i>&#8722;</i> Simplificar acordes</button>' +
     '<button class="opt" data-a="ev"><i>&#43;</i> Adicionar a um evento</button>' +
     '<button class="opt" data-a="audio"><i>&#9835;</i> Áudio de referência</button>' +
@@ -1858,6 +1860,18 @@ function songViewMenu(){
         $('#viewer').classList.toggle('nochords', !S.showChords);
         closeSheet();
         if($('#viewer').classList.contains('fit')) autoFit();
+      };
+      const bFixar = $('[data-a=fixar]', el);
+      if(bFixar) bFixar.onclick = () => {
+        // reescreve os acordes no tom que está na tela e zera o deslocamento.
+        // O tom mostrado é de cada aparelho; fixando, ele passa a ser da música — e é
+        // assim que chega nos outros ao sincronizar.
+        const t = s.transpose || 0, novoTom = keyOf(s), bemol = preferFlatFor(novoTom);
+        s.lines.forEach(l => (l.ch || []).forEach(c => { c.c = transposeChord(c.c, t, bemol); }));
+        s.key = novoTom; s.transpose = 0;
+        Store.upsertSong(s);
+        closeSheet(); refreshKeyBtn(); renderCifra();
+        toast('Tom ' + novoTom + ' fixado');
       };
       $('[data-a=simplify]', el).onclick = () => {
         closeSheet();
@@ -2243,7 +2257,8 @@ function viewSettings(){
 function dadosParaExportar(){
   return {
     app: 'cifras', version: 1, exportedAt: new Date().toISOString(),
-    settings: settingsParaExportar(), songs: Store.songs(), events: Store.events(), audios: {}
+    settings: settingsParaExportar(), songs: Store.songs(), events: Store.events(),
+    apagadas: Store.apagadas(), audios: {}
   };
 }
 
@@ -2310,8 +2325,6 @@ async function applyImport(data, replace){
         // mesma música: o backup manda, mas faixas que só existem aqui não se perdem
         const soAqui = (clash.tracks || []).filter(t => !ns.tracks.some(n => n.id === t.id));
         ns.tracks = ns.tracks.concat(soAqui);
-        // ajustes que são deste aparelho (tamanho de letra, colunas...) não vêm de fora
-        (data.__manter || []).forEach(k => { if(clash[k] !== undefined) ns[k] = clash[k]; });
         Object.assign(clash, ns);
         idMap[s0.id] = clash.id;
         continue;
@@ -2340,11 +2353,6 @@ async function applyImport(data, replace){
   if(data.audios){
     for(const chave of Object.keys(data.audios)){
       try{ await Audio_DB.put(blobMap[chave] || chave, await dataURLToBlob(data.audios[chave])); }catch(e){}
-    }
-  }
-  if(data.__blobs){                         // áudios baixados do GitHub já vêm como arquivo
-    for(const par of data.__blobs){
-      try{ await Audio_DB.put(blobMap[par[0]] || par[0], par[1]); }catch(e){}
     }
   }
 
@@ -2389,8 +2397,10 @@ render();
    Tudo manual: nada sobe nem desce sem o usuário mandar.
    ========================================================= */
 
-// ajustes que dependem da tela de cada aparelho: baixar do GitHub não mexe neles
-const CAMPOS_DE_TELA = ['fontSize', 'fitMode', 'fitScale', 'fitColsPref'];
+// O que é de cada aparelho e por isso nunca vem de fora numa música que já existe
+// aqui: tamanho de letra e colunas dependem da tela; tom e velocidade, de quem toca.
+// (Pra mudar o tom de todo mundo existe "Fixar este tom" no menu da música.)
+const CAMPOS_DE_TELA = ['fontSize', 'fitMode', 'fitScale', 'fitColsPref', 'transpose', 'scrollSpeed'];
 
 /** No GitHub Pages dá pra adivinhar o repositório de dados: mesmo dono, "cifras-dados" */
 function repoPadrao(){
@@ -2438,105 +2448,222 @@ async function jaTemFaixa(t){
   return !!b && (!t.size || b.size === t.size);
 }
 
+/** Ponte entre o js/online.js (que não conhece a tela nem o armazenamento) e o app */
+function onlineIO(diga){
+  return {
+    local: () => ({ songs: Store.songs(), events: Store.events(), apagadas: Store.apagadas() }),
+    jaTem: jaTemFaixa,
+    guardarBlob: (id, blob) => Audio_DB.put(id, blob),
+    blobDaFaixa: (id) => Audio_DB.get(id),
+    progresso: diga,
+    empacotar: (res) => Object.assign(dadosParaExportar(), { songs: res.songs, events: res.events, apagadas: res.apagadas }),
+    salvar: async (res) => {
+      res.songs.forEach(migrarAudio);
+      const gravou = Store.saveSongs(res.songs);
+      Store.saveEvents(res.events);
+      Store.saveApagadas(res.apagadas);
+      // libera os arquivos de áudio que deixaram de ter dono — só se a lista gravou
+      if(gravou){
+        const emUso = new Set();
+        res.songs.forEach(s => (s.tracks || []).forEach(t => emUso.add(t.id)));
+        for(const k of await Audio_DB.keys()){ if(!emUso.has(k)) await Audio_DB.del(k); }
+      }
+    }
+  };
+}
+
+/** "3 músicas novas, 1 atualizada" — só o que aconteceu de fato */
+function resumoChegou(r){
+  const p = [];
+  if(r.novas) p.push(r.novas + (r.novas === 1 ? ' música nova' : ' músicas novas'));
+  if(r.atualizadas) p.push(r.atualizadas + (r.atualizadas === 1 ? ' atualizada' : ' atualizadas'));
+  if(r.removidas) p.push(r.removidas + (r.removidas === 1 ? ' removida' : ' removidas'));
+  return p.join(', ');
+}
+function resumoVai(r){
+  const p = [];
+  if(r.minhasNovas) p.push(r.minhasNovas + (r.minhasNovas === 1 ? ' música nova' : ' músicas novas'));
+  if(r.minhasEdicoes) p.push(r.minhasEdicoes + (r.minhasEdicoes === 1 ? ' edição' : ' edições'));
+  return p.join(', ');
+}
+
 async function onlineBaixar(){
   const cfg = onlineCfg();
   if(!cfg) return;
   const oc = ocupado('Baixando do GitHub');
-  let dados, falta;
+  let plano;
   try{
     oc.diga('Lendo o repertório...');
-    dados = (await ghBaixarJson(cfg)).dados;
-    falta = await ghFaltamBaixar(dados, jaTemFaixa);
+    plano = await ghPlanejar(cfg, onlineIO(), { manter: CAMPOS_DE_TELA });
   }catch(e){ oc.fechar(); erroOnline(e); return; }
   oc.fechar();
+  if(!plano.temRemoto){ erroOnline(new Error('Esse repositório ainda não tem repertório. Alguém precisa enviar primeiro.')); return; }
 
-  const aplicar = async (substituir) => {
+  const executar = async (substituir) => {
     const oc2 = ocupado('Baixando do GitHub');
     try{
-      const r = await ghBaixarAudios(cfg, dados, { jaTem: jaTemFaixa, progresso: oc2.diga });
-      oc2.diga('Guardando no aparelho...');
-      dados.__blobs = r.blobs;
-      // quem só lê (sem token) também mantém o tom que escolheu pra tocar
-      dados.__manter = CAMPOS_DE_TELA.concat(cfg.token ? [] : ['transpose']);
-      S.ghBaixou = Date.now();
-      if(cfg.token){ try{ S.ghVersao = await ghVersao(cfg); }catch(e){} }
-      Store.saveSettings(S);
-      await applyImport(dados, substituir);
-      if(r.falharam) toast(r.falharam + ' áudio(s) não baixaram — toque em Baixar de novo depois', 4500);
+      let p = plano;
+      if(substituir){
+        oc2.diga('Lendo o repertório...');
+        p = await ghPlanejar(cfg, onlineIO(), { manter: CAMPOS_DE_TELA, substituir: true });
+      }
+      const r = await ghExecutar(p, onlineIO(oc2.diga), { enviar: false });
+      S.ghBaixou = Date.now(); Store.saveSettings(S);
+      oc2.fechar();
+      toast(r.falharam ? r.falharam + ' áudio(s) não baixaram — toque em Baixar de novo depois' : 'Repertório atualizado', r.falharam ? 4500 : 2200);
+      go('#/'); render();
     }catch(e){ oc2.fechar(); erroOnline(e); }
   };
 
-  const n = dados.songs.length, ne = (dados.events || []).length;
+  const chegou = resumoChegou(plano.resultado.resumo);
+  const meu = resumoVai(plano.resultado.resumo);
   sheet('<h3>Repertório do GitHub</h3>' +
-    '<p style="color:var(--fg2);line-height:1.5">' + n + ' música(s) e ' + ne + ' evento(s)' +
-      (dados.exportedAt ? ', enviado em ' + fmtDataHora(dados.exportedAt) : '') + '.<br>' +
-      (falta.faixas ? 'Áudios pra baixar: <b>' + falta.faixas + '</b> (~' + humanSize(falta.bytes) + ').'
-                    : 'Nenhum áudio novo pra baixar.') + '</p>' +
+    '<p style="color:var(--fg2);line-height:1.5">' +
+      (plano.enviadoEm ? 'Último envio: ' + fmtDataHora(plano.enviadoEm) + '.<br>' : '') +
+      (chegou ? 'Chegam: <b>' + chegou + '</b>.' : 'Nenhuma novidade nas cifras.') + '<br>' +
+      (plano.faltam.length ? 'Áudios pra baixar: <b>' + plano.faltam.length + '</b> (~' + humanSize(plano.bytesFaltam) + ').'
+                           : 'Nenhum áudio novo pra baixar.') +
+      (meu ? '<br>Você tem ' + meu + ' que ainda não ' + (cfg.token ? 'enviou.' : 'estão no GitHub.') : '') + '</p>' +
     '<button class="btn primary" id="oMerge" style="margin-bottom:6px">Mesclar com o que já tenho</button>' +
-    '<div class="hint" style="margin:0 0 12px">Atualiza as músicas do GitHub e mantém as que só existem aqui.</div>' +
+    '<div class="hint" style="margin:0 0 12px">Recebe as novidades e mantém o que você fez aqui. Na mesma música, vale a edição mais recente.</div>' +
     '<button class="btn danger" id="oRepl" style="margin-bottom:6px">Substituir tudo</button>' +
     '<div class="hint">Fica idêntico ao GitHub: o que só existe neste aparelho é apagado.</div>',
     (el) => {
-      $('#oMerge', el).onclick = () => aplicar(false);
-      $('#oRepl', el).onclick = () => aplicar(true);
+      $('#oMerge', el).onclick = () => executar(false);
+      $('#oRepl', el).onclick = () => executar(true);
     });
 }
 
 async function onlineEnviar(){
   const cfg = onlineCfg();
   if(!cfg) return;
-  if(!cfg.token){ toast('Cole o token pra poder enviar', 3000); return; }
+  if(!cfg.token){ toast('Entre com a senha da banda pra poder enviar', 3000); return; }
 
   const oc = ocupado('Conferindo o GitHub');
-  let info, versaoRemota;
+  let info, plano;
   try{
     oc.diga('Conferindo o acesso...');
     info = await ghPodeEscrever(cfg);
-    versaoRemota = await ghVersao(cfg);
+    if(!info.escreve) throw new Error('Esse acesso consegue ler, mas não escrever no repositório.');
+    oc.diga('Comparando com o que está lá...');
+    plano = await ghPlanejar(cfg, onlineIO(), { manter: CAMPOS_DE_TELA });
   }catch(e){ oc.fechar(); erroOnline(e); return; }
   oc.fechar();
-  if(!info.escreve){
-    erroOnline(new Error('Esse token consegue ler, mas não escrever no repositório. Ele precisa da permissão "Contents: Read and write".'));
-    return;
-  }
 
-  const dados = dadosParaExportar();
-  const faixas = ghTodasFaixas(dados);
-  const bytes = faixas.reduce((a, t) => a + (t.size || 0), 0);
-  // o GitHub tem algo que este aparelho nunca baixou nem enviou? então enviar apaga trabalho alheio
-  const outroAparelho = !!versaoRemota && versaoRemota !== S.ghVersao;
-
-  let texto = 'O GitHub vai ficar igual a este aparelho: ' + dados.songs.length + ' música(s), ' +
-    dados.events.length + ' evento(s) e ' + faixas.length + ' faixa(s) de áudio' +
-    (bytes ? ' (' + humanSize(bytes) + ')' : '') + '.';
+  const res = plano.resultado, r = res.resumo;
+  const faixas = ghTodasFaixas(res);
+  const chegou = resumoChegou(r), vai = resumoVai(r);
+  let texto = '';
+  if(chegou) texto += 'Antes de enviar, este aparelho recebe o que os outros mandaram: ' + chegou +
+    (plano.faltam.length ? ' e ' + plano.faltam.length + ' áudio(s) (~' + humanSize(plano.bytesFaltam) + ')' : '') + '. ';
+  texto += vai ? 'Vão daqui: ' + vai + '. ' : 'Você não tem alterações novas nas cifras. ';
+  texto += 'O repertório fica com ' + res.songs.length + ' música(s) e ' + faixas.length + ' faixa(s) de áudio.';
   if(!info.privado) texto += ' O repositório é público: qualquer pessoa pode ver e baixar.';
-  if(!dados.songs.length) texto += ' ATENÇÃO: este aparelho não tem nenhuma música — enviar vai esvaziar o repertório online.';
-  else if(outroAparelho) texto += ' ATENÇÃO: o GitHub tem uma versão que este aparelho ainda não baixou. Enviar agora apaga o que foi enviado de outro aparelho — se for o caso, baixe primeiro.';
 
   confirmSheet('Enviar para o GitHub?', texto, 'Enviar', async () => {
     const oc2 = ocupado('Enviando para o GitHub');
     try{
-      const r = await ghEnviar(cfg, dados, { blobDaFaixa: (id) => Audio_DB.get(id), progresso: oc2.diga });
-      S.ghVersao = r.versao; S.ghEnviou = Date.now();
-      Store.saveSettings(S);
+      const out = await ghExecutar(plano, onlineIO(oc2.diga), { enviar: true });
+      S.ghEnviou = Date.now(); S.ghBaixou = Date.now(); Store.saveSettings(S);
       oc2.fechar();
-      const linhas = ['<b>' + dados.songs.length + '</b> música(s) no ar.'];
-      linhas.push('Áudios: ' + r.enviadas + ' enviado(s), ' + r.jaEstavam + ' já estavam lá' +
-                  (r.removidas ? ', ' + r.removidas + ' antigo(s) removido(s)' : '') + '.');
-      if(r.semArquivo) linhas.push(r.semArquivo + ' faixa(s) não foram enviadas porque o arquivo não está neste aparelho.');
-      if(r.grandes) linhas.push(r.grandes + ' faixa(s) passam de 45 MB e o GitHub não aceita.');
+      const e = out.envio;
+      const linhas = ['<b>' + res.songs.length + '</b> música(s) no ar.'];
+      if(chegou) linhas.push('Recebido dos outros: ' + chegou + '.');
+      linhas.push('Áudios: ' + e.enviadas + ' enviado(s), ' + e.jaEstavam + ' já estavam lá' +
+                  (e.removidas ? ', ' + e.removidas + ' antigo(s) removido(s)' : '') +
+                  (out.baixadas ? ', ' + out.baixadas + ' baixado(s)' : '') + '.');
+      if(out.falharam) linhas.push(out.falharam + ' áudio(s) dos outros não baixaram — toque em Baixar depois.');
+      if(e.grandes) linhas.push(e.grandes + ' faixa(s) passam de 45 MB e o GitHub não aceita.');
       avisoSheet('Enviado', linhas.join('<br>'));
       if($('#ghStatus')) viewSettings();
-    }catch(e){
+    }catch(err){
       oc2.fechar();
-      erroOnline(new Error(e.message + ' O que já subiu fica guardado: é só enviar de novo que ele continua de onde parou.'));
+      erroOnline(err.status === 409 ? err
+        : new Error(err.message + ' O que já subiu fica guardado: é só enviar de novo que ele continua de onde parou.'));
     }
   });
+}
+
+/** Membro da banda: digita a senha uma vez e o aparelho passa a poder enviar */
+async function onlineEntrar(){
+  const cfg = onlineCfg();
+  if(!cfg) return;
+  const senha = $('#ghSenha').value;
+  if(!ghSenhaLimpa(senha)){ toast('Digite a senha da banda'); return; }
+  const oc = ocupado('Entrando');
+  try{
+    oc.diga('Conferindo a senha...');
+    const token = await ghEntrarComSenha(cfg.repo, senha);
+    oc.diga('Conferindo o acesso...');
+    let info;
+    try{ info = await ghPodeEscrever({ repo: cfg.repo, token: token }); }
+    catch(e){
+      if(e.status === 401) throw new Error('A senha está certa, mas esse acesso foi cancelado. Peça a senha nova pra quem cuida do repertório.');
+      throw e;
+    }
+    if(!info.escreve) throw new Error('A senha está certa, mas o acesso não permite enviar.');
+    S.ghToken = token; Store.saveSettings(S);
+    oc.fechar();
+    toast('Pronto: este aparelho já pode enviar', 2600);
+    viewSettings();
+  }catch(e){ oc.fechar(); erroOnline(e); }
+}
+
+/** Quem já tem acesso define (ou troca, ou remove) a senha da banda */
+function senhaDaBandaSheet(){
+  const cfg = onlineCfg();
+  if(!cfg || !cfg.token) return;
+  sheet('<h3>Senha da banda</h3>' +
+    '<p style="color:var(--fg2);line-height:1.5;margin:0 0 12px">Quem tiver essa senha digita uma vez no app e passa a poder ' +
+      '<b>enviar alterações</b>, sem criar conta nem token. <span id="sbEstado"></span></p>' +
+    '<div class="field"><label>Nova senha</label>' +
+      '<input id="sbSenha" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ex.: uma frase de 3 ou 4 palavras">' +
+      '<div class="hint" id="sbForca">Mínimo de 8 caracteres. Uma frase curta é o mais fácil de passar pra banda.</div></div>' +
+    '<button class="btn primary" id="sbOk" style="margin-bottom:9px">Publicar senha</button>' +
+    '<button class="btn danger" id="sbDel" style="margin-bottom:12px;display:none">Remover a senha</button>' +
+    '<div class="hint">A senha precisa ser longa porque o arquivo de acesso fica num repositório público e pode ser testado ' +
+      'sem limite de tentativas. <b>Pra tirar o acesso de alguém</b> não basta trocar a senha: gere um token novo no GitHub, ' +
+      'apague o antigo lá, cole o novo aqui e publique outra senha.</div>',
+    (el) => {
+      const inp = $('#sbSenha', el), forca = $('#sbForca', el);
+      ghTemAcesso(cfg).then(tem => {
+        if(!document.body.contains(el)) return;
+        $('#sbEstado', el).innerHTML = tem ? '<b>Já existe uma senha publicada</b> — publicar outra substitui.' : 'Ainda não há senha publicada.';
+        $('#sbDel', el).style.display = tem ? '' : 'none';
+      }).catch(() => {});
+      inp.oninput = () => {
+        const f = ghSenhaForte(inp.value);
+        forca.textContent = !ghSenhaLimpa(inp.value) ? 'Mínimo de 8 caracteres. Uma frase curta é o mais fácil de passar pra banda.'
+                          : f.ok ? 'Boa senha.' : f.motivo;
+        forca.style.color = !ghSenhaLimpa(inp.value) ? '' : (f.ok ? 'var(--acc2)' : 'var(--danger)');
+      };
+      $('#sbOk', el).onclick = async () => {
+        const f = ghSenhaForte(inp.value);
+        if(!f.ok){ inp.oninput(); inp.focus(); return; }
+        const senha = inp.value;
+        const oc = ocupado('Publicando a senha');
+        try{
+          oc.diga('Protegendo o acesso...');
+          await ghPublicarAcesso(cfg, senha);
+          oc.fechar();
+          avisoSheet('Senha publicada', 'Passe a senha pra banda. Cada pessoa digita uma vez em ' +
+            '<b>Ajustes → Online → Senha da banda</b> e o aparelho dela passa a poder enviar.');
+        }catch(e){ oc.fechar(); erroOnline(e); }
+      };
+      $('#sbDel', el).onclick = () => confirmSheet('Remover a senha?',
+        'Ninguém mais entra com a senha. Quem já entrou continua com acesso até você apagar o token no GitHub.', 'Remover',
+        async () => {
+          const oc = ocupado('Removendo a senha');
+          try{ await ghRemoverAcesso(cfg); oc.fechar(); toast('Senha removida'); }
+          catch(e){ oc.fechar(); erroOnline(e); }
+        });
+    });
 }
 
 /** HTML da seção Online em Ajustes */
 function onlineSecaoHTML(){
   const repo = S.ghRepo || repoPadrao();
+  const temAcesso = !!String(S.ghToken || '').trim();
   return '<div class="sep" style="margin:20px 0"></div>' +
     '<h3 style="font-size:15px;margin:0 0 4px">Online (GitHub)</h3>' +
     '<div class="switch"><span>Usar repertório online</span><input type="checkbox" id="cfgOnline"' + (S.online ? ' checked' : '') + '></div>' +
@@ -2544,19 +2671,30 @@ function onlineSecaoHTML(){
       '<div class="field"><label>Repositório</label>' +
         '<input id="ghRepo" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="dono/repositorio" value="' + esc(repo) + '"></div>' +
       '<button class="btn primary" id="ghDown" style="margin-bottom:9px">&#8681; Baixar do GitHub</button>' +
-      '<div class="hint" style="margin-bottom:16px">Quem só baixa não precisa de mais nada. O app continua guardando tudo ' +
-        'no aparelho, então depois de baixar funciona sem internet.</div>' +
-      '<div class="field"><label>Token — só pra quem envia</label>' +
-        '<input id="ghToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" ' +
-          'placeholder="github_pat_..." value="' + esc(S.ghToken || '') + '">' +
-        '<div class="hint">Crie em <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">' +
-          'GitHub → Fine-grained tokens</a>: acesso <b>só a este repositório</b>, permissão <b>Contents: Read and write</b>. ' +
-          'Fica guardado só neste aparelho e nunca entra nas exportações.</div></div>' +
-      '<button class="btn" id="ghUp" style="margin-bottom:9px">&#8679; Enviar para o GitHub</button>' +
-      '<div class="hint" id="ghStatus">' +
-        (S.ghBaixou ? 'Último download: ' + fmtDataHora(S.ghBaixou) + '. ' : '') +
-        (S.ghEnviou ? 'Último envio: ' + fmtDataHora(S.ghEnviou) + '. ' : '') +
-        'Enviar deixa o GitHub igual a este aparelho — cifras e áudios.</div>' +
+      '<div class="hint" style="margin-bottom:16px">Baixar não precisa de senha. O app continua guardando tudo ' +
+        'no aparelho, então depois funciona sem internet.</div>' +
+
+      (temAcesso
+        ? '<div class="okbox">&#10003; Este aparelho pode enviar alterações.</div>' +
+          '<button class="btn" id="ghUp" style="margin-bottom:9px">&#8679; Enviar para o GitHub</button>' +
+          '<div class="hint" id="ghStatus" style="margin-bottom:14px">' +
+            (S.ghBaixou ? 'Último download: ' + fmtDataHora(S.ghBaixou) + '. ' : '') +
+            (S.ghEnviou ? 'Último envio: ' + fmtDataHora(S.ghEnviou) + '. ' : '') +
+            'Enviar primeiro recebe o que os outros mandaram, junta com o seu e só então envia.</div>' +
+          '<div class="row"><button class="btn" id="ghSenhaBtn">Senha da banda…</button>' +
+            '<button class="btn" id="ghSair">Sair deste aparelho</button></div>'
+        : '<div class="field"><label>Senha da banda — pra poder enviar</label>' +
+            '<input id="ghSenha" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="a senha que te passaram">' +
+            '<div class="hint">Digita uma vez e fica salva neste aparelho.</div></div>' +
+          '<button class="btn" id="ghEntrar" style="margin-bottom:12px">Entrar</button>' +
+          '<details class="avancado"><summary>Sou eu que cuido do repertório (tenho um token)</summary>' +
+            '<div class="field" style="margin-top:10px"><label>Token do GitHub</label>' +
+              '<input id="ghToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_...">' +
+              '<div class="hint">Crie em <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">' +
+                'GitHub → Fine-grained tokens</a>: acesso <b>só a este repositório</b>, permissão <b>Contents: Read and write</b>. ' +
+                'Depois de colar, defina a senha da banda pra os outros entrarem sem token.</div></div>' +
+            '<button class="btn" id="ghUsarToken">Usar este token</button>' +
+          '</details>') +
     '</div>';
 }
 
@@ -2567,16 +2705,31 @@ function onlineLigar(){
     Store.saveSettings(S);
     $('#onlineBox').style.display = S.online ? '' : 'none';
   };
-  const pintarEnviar = () => {
-    const b = $('#ghUp'), tem = !!String(S.ghToken || '').trim();
-    b.disabled = !tem;
-    b.style.opacity = tem ? '' : '.45';
-  };
   $('#ghRepo').oninput = (e) => { S.ghRepo = e.target.value.trim(); Store.saveSettings(S); };
-  $('#ghToken').oninput = (e) => { S.ghToken = e.target.value.trim(); Store.saveSettings(S); pintarEnviar(); };
   $('#ghDown').onclick = () => onlineBaixar();
-  $('#ghUp').onclick = () => onlineEnviar();
-  pintarEnviar();
+
+  if($('#ghUp')){
+    $('#ghUp').onclick = () => onlineEnviar();
+    $('#ghSenhaBtn').onclick = () => senhaDaBandaSheet();
+    $('#ghSair').onclick = () => confirmSheet('Sair deste aparelho?',
+      'Este aparelho deixa de poder enviar. Suas músicas continuam aqui, e dá pra entrar de novo com a senha.', 'Sair',
+      () => { S.ghToken = ''; Store.saveSettings(S); viewSettings(); });
+  } else {
+    $('#ghEntrar').onclick = () => onlineEntrar();
+    $('#ghSenha').onkeydown = (e) => { if(e.key === 'Enter') onlineEntrar(); };
+    $('#ghUsarToken').onclick = async () => {
+      const cfg = onlineCfg();
+      const token = $('#ghToken').value.trim();
+      if(!cfg || !token){ toast('Cole o token'); return; }
+      const oc = ocupado('Conferindo o token');
+      try{
+        const info = await ghPodeEscrever({ repo: cfg.repo, token: token });
+        if(!info.escreve) throw new Error('Esse token consegue ler, mas não escrever. Ele precisa da permissão "Contents: Read and write".');
+        S.ghToken = token; Store.saveSettings(S);
+        oc.fechar(); toast('Token aceito'); viewSettings();
+      }catch(e){ oc.fechar(); erroOnline(e); }
+    };
+  }
 }
 
 /* ---------------- atualização do app ---------------- */

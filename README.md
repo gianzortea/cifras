@@ -42,7 +42,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Gravar** | Botão **● Gravar** na cifra: grava pelo microfone ali mesmo, com a letra na tela, e ao parar salva como **mais uma faixa** (nunca substitui as que já existem). Barra com relógio e medidor de volume; continua visível no modo palco. Depois abre o recorte de início/fim. |
 | **Eventos** | Setlists ordenadas: reordene **arrastando pela alça ≡** ou pelos botões ▲▼. Dentro da cifra aparecem ‹ › pra pular pra próxima. |
 | **Backup** | Dois JSONs: **Exportar cifras** (leve, sem os áudios) e **Exportar com áudios** (embute os arquivos em base64, ~34% maior que a soma dos MP3 — o tamanho estimado aparece no botão). Importar oferece mesclar ou substituir. |
-| **Online (GitHub)** | Opcional, em Ajustes: o repertório (cifras, eventos **e áudios**) fica num repositório do GitHub. **Baixar** não precisa de conta nem token; **Enviar** pede um token de quem mantém o repertório. Tudo manual, por botão. O app continua guardando tudo no aparelho, então funciona offline depois de baixar. |
+| **Online (GitHub)** | Opcional, em Ajustes: o repertório (cifras, eventos **e áudios**) fica num repositório do GitHub. **Baixar** não precisa de nada. **Enviar** pede a **senha da banda**, digitada uma vez por aparelho — quem cuida do repertório define a senha a partir do token dele. Enviar sempre recebe e mescla antes, então ninguém apaga o trabalho de ninguém. Tudo manual, por botão, e o app continua funcionando offline. |
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
 | **Zoom** | Pinça com dois dedos em **qualquer modo**, inclusive *caber na tela* (no computador: Ctrl + roda ou pinça no trackpad). É uma lupa: amplia sem refazer o layout, então voltar ao 100% (no botão `150% ✕`) deixa tudo exatamente como estava. |
 
@@ -115,6 +115,37 @@ letra, colunas e — pra quem só lê — o tom que escolheu.
 um JSON apontando pra áudio que ainda não subiu; e um envio interrompido continua
 de onde parou. Se o GitHub tem uma versão que este aparelho não conhece (enviada de
 outro aparelho), o app avisa antes de sobrescrever.
+
+### Várias pessoas editando
+
+**Senha da banda.** Pra gravar no GitHub é preciso uma credencial. O token de quem
+cuida do repertório fica no próprio repositório (`acesso.json`), cifrado com a
+senha (PBKDF2-SHA256, 600 mil rodadas → AES-GCM). Quem digita a senha certa
+recupera o token e o aparelho passa a poder enviar.
+
+O arquivo é público, então a senha é a única barreira e pode ser testada sem
+limite de tentativas. Por isso ela tem tamanho mínimo: medido num PC de 12
+núcleos, 4 números caem em 65 segundos; 8 letras e números levam ~580 anos. O
+app recusa senha fraca. Tirar o acesso de alguém não é trocar a senha — é gerar
+outro token, apagar o antigo no GitHub e publicar senha nova (o arquivo antigo
+continua no histórico do git, cifrado com a senha antiga).
+
+**Mescla.** Enviar = ler o GitHub → juntar → baixar os áudios que faltam → gravar
+no aparelho → enviar. Por música vale a edição mais recente (`editadoEm`, que só
+anda quando o *conteúdo* muda — mexer em zoom ou tom não conta). As faixas de áudio
+são unidas dos dois lados: ninguém perde uma gravação porque outro corrigiu a letra.
+
+**Exclusões** ficam num registro (`apagadas: {id: quando}`) que viaja no JSON.
+Sem ele, a música que um apagou voltaria na sincronia do outro. Aparelho zerado
+não tem registro, então recebe tudo de volta em vez de apagar o repertório.
+
+**Corrida.** O envio informa ao GitHub qual versão está substituindo. Se outra
+pessoa enviou no meio, o GitHub recusa e o app pede pra enviar de novo — aí ele
+mescla com a versão nova.
+
+**O que é de cada aparelho** e nunca vem de fora numa música que já existe:
+tamanho de letra, colunas, tom e velocidade da rolagem. Pra mudar o tom de todo
+mundo, "Fixar o tom" no menu da música reescreve os acordes no tom da tela.
 
 Detalhes que custaram descobrir:
 
