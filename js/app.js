@@ -2762,6 +2762,26 @@ async function primeiraSincronia(diga){
   }
 }
 
+/* Campo de senha com o olho pra mostrar/esconder o que foi digitado */
+const OLHO_ABERTO = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const OLHO_FECHADO = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.6 5.1A10.5 10.5 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.5 6.6A17.3 17.3 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 5.2-1.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>';
+function campoSenha(id, dica){
+  return '<div class="senha"><input id="' + id + '" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="' + esc(dica) + '">' +
+         '<button type="button" class="olho" data-olho="' + id + '" aria-label="Mostrar senha" aria-pressed="false">' + OLHO_ABERTO + '</button></div>';
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest ? e.target.closest('[data-olho]') : null;
+  if(!b) return;
+  const inp = document.getElementById(b.dataset.olho);
+  if(!inp) return;
+  const mostrar = inp.type === 'password';
+  inp.type = mostrar ? 'text' : 'password';
+  b.innerHTML = mostrar ? OLHO_FECHADO : OLHO_ABERTO;
+  b.setAttribute('aria-label', mostrar ? 'Esconder senha' : 'Mostrar senha');
+  b.setAttribute('aria-pressed', String(mostrar));
+  if(!inp.disabled) inp.focus();           // o teclado do celular não fecha ao tocar no olho
+});
+
 /** O aviso de quem está offline: entrar ou continuar com o que já tem */
 function avisoEntrar(motivo){
   if(!onlineAtivo() || onlineConectado()) return;
@@ -2772,7 +2792,7 @@ function avisoEntrar(motivo){
       'Entre com a senha da banda pra receber as músicas e os áudios atualizados. É uma vez só: ' +
       'depois o app se atualiza sozinho e continua funcionando sem internet.</p>' +
     '<div class="field" style="margin-bottom:8px">' +
-      '<input id="lgSenha" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Senha da banda"></div>' +
+      campoSenha('lgSenha', 'Senha da banda') + '</div>' +
     '<div class="trim-err" id="lgErr" style="margin-bottom:8px"></div>' +
     '<div class="hint" id="lgProg" style="margin-bottom:8px;display:none"></div>' +
     '<button class="btn primary" id="lgEntrar" style="margin-bottom:9px">Entrar</button>' +
@@ -2897,11 +2917,11 @@ function onlineSecaoHTML(){
           avancado('<button class="btn danger" id="ghEspelhar">Substituir tudo pelo que está no GitHub</button>' +
             '<div class="hint">Descarta o que só existe neste aparelho e copia o repertório do GitHub.</div>')
         : '<div class="field"><label>Senha da banda</label>' +
-            '<input id="ghSenha" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="a senha que te passaram">' +
+            campoSenha('ghSenha', 'a senha que te passaram') +
             '<div class="hint">Digita uma vez e fica salva neste aparelho. Depois o app se atualiza sozinho.</div></div>' +
           '<button class="btn primary" id="ghEntrar">Entrar</button>' +
           avancado('<div class="field"><label>Token do GitHub — só pra quem cuida do repertório</label>' +
-              '<input id="ghToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_...">' +
+              campoSenha('ghToken', 'github_pat_...') +
               '<div class="hint">Crie em <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">' +
                 'GitHub → Fine-grained tokens</a>: acesso <b>só a este repositório</b>, permissão <b>Contents: Read and write</b>. ' +
                 'Depois de colar, defina a senha da banda.</div></div>' +

@@ -385,6 +385,14 @@ html[data-esp="minimo"] .cifra .sec{margin:.25em 0 0}
 }
 details.avancado{border:1px solid var(--line); border-radius:12px; padding:10px 12px}
 details.avancado summary{font-size:13px; color:var(--fg2); cursor:pointer; font-weight:600}
+/* campo de senha com o olho de mostrar/esconder */
+.senha{position:relative}
+.senha input{padding-right:48px}
+.senha .olho{
+  position:absolute; top:0; right:0; bottom:0; width:46px;
+  display:flex; align-items:center; justify-content:center; color:var(--fg3);
+}
+.senha .olho[aria-pressed="true"]{color:var(--acc)}
 /* quem ainda nao entrou com a senha da banda */
 .offbar{
   display:flex; align-items:center; gap:10px; margin-bottom:12px; padding:9px 10px 9px 12px;
