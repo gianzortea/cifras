@@ -18,6 +18,7 @@ function toast(msg, ms){
   t.textContent = msg;
   $('#toast').appendChild(t);
   setTimeout(() => t.remove(), ms || 2000);
+  return t;
 }
 function applyTheme(){
   document.documentElement.dataset.theme = S.theme;
@@ -345,6 +346,8 @@ function viewSong(id, q){
   const s = Store.getSong(id);
   if(!s){ go('#/'); return; }
   V.song = s; V.edit = false; V.zen = false; V.zoom = 1;
+  // mesma música e mesma cifra de quando saiu: a história de desfazer continua valendo
+  if(U.id !== s.id || U.linhas !== JSON.stringify(s.lines)) zerarDesfazer();
 
   V.ev = q.ev ? Store.getEvent(q.ev) : null;
   V.evIndex = V.ev ? (V.ev.songs || []).indexOf(id) : -1;
@@ -996,6 +999,87 @@ function allChordsSheet(){
       : '<p style="color:var(--fg2)">Essa música não tem acordes marcados.</p>'));
 }
 
+/* ---------- desfazer / refazer ----------
+   Vale pro que muda a cifra dentro da visualização: mover, trocar, inserir e remover
+   acorde, simplificar e fixar o tom. Zoom, colunas e tom da tela ficam de fora — são
+   ajustes que se desfazem no próprio botão e só gastariam os passos.
+   Fica só na memória (nada vai pro armazenamento nem pro GitHub) e vale enquanto a
+   música for a mesma: abrir outra cifra recomeça a história. */
+const DESFAZER_MAX = 20;
+const U = { id: null, linhas: '', atras: [], frente: [] };
+
+function fotoCifra(){
+  const s = V.song;
+  return JSON.stringify({ lines: s.lines, key: s.key || '', transpose: s.transpose || 0 });
+}
+function zerarDesfazer(){
+  U.id = V.song ? V.song.id : null;
+  U.linhas = V.song ? JSON.stringify(V.song.lines) : '';
+  U.atras = []; U.frente = [];
+  pintarDesfazer();
+}
+/** Abre um passo ANTES de alterar V.song. Vários ajustes seguidos na mesma folha usam o mesmo passo. */
+function novoPasso(oQue){ return { oQue: oQue, foto: fotoCifra() }; }
+/** Fecha o passo DEPOIS de alterar: grava a música e guarda o passo na história */
+function fecharPasso(p){
+  Store.upsertSong(V.song);
+  const i = U.atras.indexOf(p);
+  if(fotoCifra() === p.foto){ if(i >= 0) U.atras.splice(i, 1); }        // voltou ao que era: nada a desfazer
+  else {
+    if(i < 0){ U.atras.push(p); if(U.atras.length > DESFAZER_MAX) U.atras.shift(); }
+    U.frente = [];
+  }
+  U.linhas = JSON.stringify(V.song.lines);
+  pintarDesfazer();
+}
+function aplicarFoto(foto){
+  const d = JSON.parse(foto), s = V.song;
+  s.lines = d.lines;
+  // o tom da tela é do aparelho e fica como está — menos ao desfazer um "fixar o tom",
+  // que reescreveu os acordes: aí a música volta inteira ao que era
+  if(d.key !== (s.key || '')){ s.key = d.key; s.transpose = d.transpose; }
+  Store.upsertSong(s);
+  U.linhas = JSON.stringify(s.lines);
+  closeSheet();
+  refreshKeyBtn(); renderCifra();
+  pintarDesfazer();
+}
+// um aviso por vez: tocar no desfazer várias vezes seguidas não empilha avisos na tela
+let avisoDoDesfazer = null;
+function avisarDesfazer(msg){
+  if(avisoDoDesfazer) avisoDoDesfazer.remove();
+  avisoDoDesfazer = toast(msg, 1500);
+}
+function desfazer(){
+  if(!$('#viewer') || V.grav) return;
+  const p = U.atras.pop();
+  if(!p){ avisarDesfazer('Nada pra desfazer'); return; }
+  U.frente.push({ oQue: p.oQue, foto: fotoCifra() });
+  aplicarFoto(p.foto);
+  avisarDesfazer('Desfeito: ' + p.oQue);
+}
+function refazer(){
+  if(!$('#viewer') || V.grav) return;
+  const p = U.frente.pop();
+  if(!p){ avisarDesfazer('Nada pra refazer'); return; }
+  U.atras.push({ oQue: p.oQue, foto: fotoCifra() });
+  aplicarFoto(p.foto);
+  avisarDesfazer('Refeito: ' + p.oQue);
+}
+function pintarDesfazer(){
+  const d = $('#uDes'), r = $('#uRef');
+  if(d) d.disabled = !U.atras.length;
+  if(r) r.disabled = !U.frente.length;
+}
+// teclado (computador): Ctrl+Z desfaz, Ctrl+Shift+Z ou Ctrl+Y refaz
+document.addEventListener('keydown', (e) => {
+  if(!(e.ctrlKey || e.metaKey) || e.altKey || !$('#viewer') || $('#modal-root').firstChild) return;
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) return;
+  const k = e.key.toLowerCase();
+  if(k === 'z' && !e.shiftKey){ e.preventDefault(); desfazer(); }
+  else if(k === 'y' || (k === 'z' && e.shiftKey)){ e.preventDefault(); refazer(); }
+});
+
 /* ---------- modo edição de acordes ---------- */
 function toggleEdit(){
   V.edit = !V.edit;
@@ -1011,9 +1095,14 @@ function toggleEdit(){
       const bar = document.createElement('div');
       bar.className = 'editbar'; bar.id = 'editbar';
       bar.innerHTML = '<span style="flex:1">Arraste os acordes ↔ · toque para editar · toque na letra para inserir</span>' +
+                      '<button class="tool" id="uDes" aria-label="Desfazer">&#8630;</button>' +
+                      '<button class="tool" id="uRef" aria-label="Refazer">&#8631;</button>' +
                       '<button class="tool on" id="editDone">Concluir</button>';
       v.insertBefore(bar, $('#dock'));
       $('#editDone').onclick = () => toggleEdit();
+      $('#uDes').onclick = () => desfazer();
+      $('#uRef').onclick = () => refazer();
+      pintarDesfazer();
     }
     bindEditHandlers();
   } else {
@@ -1219,8 +1308,9 @@ function bindEditHandlers(){
       id = null;
       const li = +sp.dataset.l, ci = +sp.dataset.c;
       if(moved){
+        const passo = novoPasso('acorde movido');
         V.song.lines[li].ch[ci].p = parseInt(sp.dataset.np, 10) || 0;
-        Store.upsertSong(V.song);
+        fecharPasso(passo);
       } else {
         chordSheet(li, ci);
       }
@@ -1240,23 +1330,28 @@ function bindEditHandlers(){
 }
 
 function addChordAt(li, p){
+  const passo = novoPasso('acorde novo');
   const line = V.song.lines[li];
   if(!line.ch) line.ch = [];
   line.ch.push({ p: p, c: 'C' });
   line.ch.sort((a,b) => a.p - b.p);
   const ci = line.ch.findIndex(c => c.p === p && c.c === 'C');
-  Store.upsertSong(V.song);
+  fecharPasso(passo);
   renderCifra();
-  chordSheet(li, ci < 0 ? line.ch.length - 1 : ci, true);
+  // escolher o nome do acorde novo faz parte do mesmo passo: um "desfazer" tira o acorde inteiro
+  chordSheet(li, ci < 0 ? line.ch.length - 1 : ci, true, passo);
 }
 
 const COMMON = ['C','D','E','F','G','A','B','Am','Bm','Cm','Dm','Em','Fm','Gm','C7','D7','E7','G7','A7','B7','F#m','C#m','G#m','Bb','Eb','Ab','C/E','G/B','D/F#','Cmaj7','Dsus4','Asus4','Em7','Am7','Dm7'];
 
-function chordSheet(li, ci, isNew){
+function chordSheet(li, ci, isNew, passoDoNovo){
   const line = V.song.lines[li];
   const c = line.ch[ci];
   if(!c) return;
   const shown = dispChord(c.c, V.song);
+  // tudo que for feito nesta folha (empurrar, renomear, remover) é um passo só
+  const passo = passoDoNovo || novoPasso('acorde alterado');
+  const fechar = (oQue) => { if(!passoDoNovo) passo.oQue = oQue; fecharPasso(passo); };
 
   sheet('<h3>Acorde</h3>' +
     '<div class="field"><input id="chIn" value="' + esc(shown) + '" autocapitalize="off" ' +
@@ -1274,16 +1369,16 @@ function chordSheet(li, ci, isNew){
       const inp = $('#chIn', el);
       if(isNew) setTimeout(() => { inp.focus(); inp.select(); }, 60);
       $$('[data-q]', el).forEach(b => b.onclick = () => { inp.value = b.dataset.q; });
-      $('#chL', el).onclick = () => { c.p = Math.max(0, c.p - 1); Store.upsertSong(V.song); renderCifra(); };
-      $('#chR', el).onclick = () => { c.p = c.p + 1; Store.upsertSong(V.song); renderCifra(); };
+      $('#chL', el).onclick = () => { c.p = Math.max(0, c.p - 1); fechar('acorde movido'); renderCifra(); };
+      $('#chR', el).onclick = () => { c.p = c.p + 1; fechar('acorde movido'); renderCifra(); };
       $('#chDel', el).onclick = () => {
         line.ch.splice(ci, 1);
-        Store.upsertSong(V.song); closeSheet(); renderCifra(); toast('Removido');
+        fechar('acorde removido'); closeSheet(); renderCifra(); toast('Removido');
       };
       $('#chOk', el).onclick = () => {
         const val = inp.value.trim();
         if(val) c.c = toStored(val, V.song);
-        Store.upsertSong(V.song); closeSheet(); renderCifra();
+        fechar('acorde alterado'); closeSheet(); renderCifra();
       };
       inp.onkeydown = (e) => { if(e.key === 'Enter') $('#chOk', el).click(); };
     });
@@ -1849,7 +1944,11 @@ function navEvent(d){
 /* ---------- menu do visualizador ---------- */
 function songViewMenu(){
   const s = V.song;
+  const ultimo = U.atras[U.atras.length - 1], proximo = U.frente[U.frente.length - 1];
   sheet('<h3>' + esc(s.title) + '</h3>' +
+    (ultimo ? '<button class="opt" data-a="desfazer"><i>&#8630;</i> Desfazer: ' + esc(ultimo.oQue) + '</button>' : '') +
+    (proximo ? '<button class="opt" data-a="refazer"><i>&#8631;</i> Refazer: ' + esc(proximo.oQue) + '</button>' : '') +
+    (ultimo || proximo ? '<div class="sep"></div>' : '') +
     '<button class="opt" data-a="edit"><i>&#9998;</i> Editar texto da cifra</button>' +
     '<button class="opt" data-a="dg"><i>&#9648;</i> Acordes da música (desenhos)</button>' +
     '<button class="opt" data-a="chords"><i>&#9834;</i> ' + (S.showChords ? 'Esconder acordes (só letra)' : 'Mostrar acordes') + '</button>' +
@@ -1860,6 +1959,8 @@ function songViewMenu(){
     '<div class="sep"></div>' +
     '<button class="opt" data-a="reset"><i>&#8635;</i> Resetar tom e zoom</button>',
     (el) => {
+      if(ultimo) $('[data-a=desfazer]', el).onclick = () => desfazer();
+      if(proximo) $('[data-a=refazer]', el).onclick = () => refazer();
       $('[data-a=edit]', el).onclick = () => { closeSheet(); go('#/edit/' + s.id); };
       $('[data-a=dg]', el).onclick = () => allChordsSheet();
       $('[data-a=chords]', el).onclick = () => {
@@ -1874,17 +1975,19 @@ function songViewMenu(){
         // O tom mostrado é de cada aparelho; fixando, ele passa a ser da música — e é
         // assim que chega nos outros ao sincronizar.
         const t = s.transpose || 0, novoTom = keyOf(s), bemol = preferFlatFor(novoTom);
+        const passo = novoPasso('tom fixado');
         s.lines.forEach(l => (l.ch || []).forEach(c => { c.c = transposeChord(c.c, t, bemol); }));
         s.key = novoTom; s.transpose = 0;
-        Store.upsertSong(s);
+        fecharPasso(passo);
         closeSheet(); refreshKeyBtn(); renderCifra();
         toast('Tom ' + novoTom + ' fixado');
       };
       $('[data-a=simplify]', el).onclick = () => {
         closeSheet();
-        confirmSheet('Simplificar acordes', 'C7M(9)/E vira C, Am7 vira Am. Altera a cifra salva.', 'Simplificar', () => {
+        confirmSheet('Simplificar acordes', 'C7M(9)/E vira C, Am7 vira Am. Altera a cifra salva (dá pra desfazer no menu).', 'Simplificar', () => {
+          const passo = novoPasso('acordes simplificados');
           s.lines.forEach(l => (l.ch || []).forEach(c => { c.c = simplifyChord(c.c); }));
-          Store.upsertSong(s); renderCifra(); toast('Simplificado');
+          fecharPasso(passo); renderCifra(); toast('Simplificado');
         });
       };
       $('[data-a=ev]', el).onclick = () => { closeSheet(); addToEventSheet(s.id); };
@@ -2590,6 +2693,7 @@ function aposReceberNovidades(){
     if(!nova){ toast('Esta música foi removida do repertório', 3000); go(V.ev ? '#/event/' + V.ev.id : '#/'); return; }
     if(!V.edit && !V.grav && assinaturaConteudo(nova) !== assinaturaConteudo(V.song)){
       V.song = nova;
+      zerarDesfazer();
       renderCifra(); refreshKeyBtn();
     }
     return;
