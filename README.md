@@ -43,6 +43,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 | **Gravar** | Botão **● Gravar** na cifra: grava pelo microfone ali mesmo, com a letra na tela, e ao parar salva como **mais uma faixa** (nunca substitui as que já existem). Barra com relógio e medidor de volume; continua visível no modo palco. Depois abre o recorte de início/fim. |
 | **Eventos** | Setlists ordenadas: reordene **arrastando pela alça ≡** ou pelos botões ▲▼. Dentro da cifra aparecem ‹ › pra pular pra próxima. Ao criar (ou editar) dá pra marcar **Evento particular**: fica só neste aparelho, com a etiqueta "particular" na lista — não entra na sincronia nem no JSON do GitHub (vai só no backup exportado). Tornar particular um evento já publicado o retira do GitHub e dos outros aparelhos. **Arquivar** (menu ⋮ do evento) tira o evento da lista sem apagar nada; **Arquivados (N)**, no fim da lista, mostra os arquivados com o botão Desarquivar. Arquivar é um dado do evento, então sincroniza: vale pra banda toda (menos em evento particular). |
 | **Backup** | Dois JSONs: **Exportar cifras** (leve, sem os áudios) e **Exportar com áudios** (embute os arquivos em base64, ~34% maior que a soma dos MP3 — o tamanho estimado aparece no botão). Importar oferece mesclar ou substituir. |
+| **Ajustar com IA** | Última opção do menu ⋮ da cifra: você escreve o pedido ("no refrão, troque o F#m por D", "organize nas partes da música") e um modelo gratuito da OpenRouter devolve a cifra alterada. O app mostra **o que muda, linha a linha**, e só aplica se você tocar em Aplicar — e entra no desfazer. |
 | **Online (GitHub)** | Ligado por padrão: o repertório (cifras, eventos **e áudios**) fica num repositório do GitHub. Quem abre o app sem ter entrado vê um aviso: **Entrar** (pede a **senha da banda**, uma vez por aparelho) ou **Continuar offline**. Depois de entrar é tudo automático: o app baixa as novidades ao abrir e **publica sozinho** o que for alterado, sempre mesclando antes — ninguém apaga o trabalho de ninguém. Tudo continua guardado no aparelho e funciona sem internet. Dá pra desligar em Ajustes. |
 | **Modo palco** | Toque na cifra pra esconder toda a interface. |
 | **Zoom** | Pinça com dois dedos em **qualquer modo**, inclusive *caber na tela* (no computador: Ctrl + roda ou pinça no trackpad). É uma lupa: amplia sem refazer o layout, então voltar ao 100% (no botão `150% ✕`) deixa tudo exatamente como estava. |
@@ -75,6 +76,7 @@ js/parser.js        texto colado -> modelo de linhas com acordes posicionados
 js/diagrams.js      desenhos de acorde (abertos, pestana e busca no braço)
 js/store.js         localStorage (músicas/eventos) + IndexedDB (áudios)
 js/online.js        enviar/baixar o repertório num repositório do GitHub
+js/ia.js            "Ajustar com IA": conversa com a OpenRouter e guarda da chave
 js/app.js           rotas, telas e o visualizador
 sw.js               cache offline
 manifest.json       instalação como app
@@ -183,6 +185,42 @@ Detalhes que custaram descobrir:
   navegador (`fetch` trocado por um repositório em memória).
 - Tetos do GitHub: arquivo de até ~45 MB pela API e repositório recomendado
   abaixo de 1 GB — umas 250 faixas de 4 minutos a ~1 MB por minuto.
+
+## Ajustar com IA
+
+Usa o roteador de modelos gratuitos da OpenRouter (`openrouter/free`), direto do
+navegador — sem servidor.
+
+**A chave não está no código.** O app é público (repositório e GitHub Pages), então
+qualquer chave escrita nele seria de todo mundo. Ela é colada uma vez em
+**Ajustes → IA** por quem cuida do repertório e fica em dois lugares:
+
+- no aparelho, nos ajustes (fora de backup e de sincronia, como o token);
+- em `ia.json`, no repositório de dados, **cifrada** (AES-GCM) com uma chave derivada
+  do token do GitHub. Só quem entrou com a senha da banda tem o token, então só a
+  banda abre. Os outros aparelhos buscam a chave sozinhos no primeiro uso; se ela for
+  trocada, a OpenRouter recusa a antiga e o app busca a nova.
+
+A segurança da chave da IA é, portanto, a da senha da banda. Trocar o token do
+GitHub exige salvar a chave de novo (o app faz isso sozinho no aparelho de quem
+troca). Vale manter um limite de gasto na chave, do lado da OpenRouter.
+
+**O que vai e o que volta.** Vai a cifra daquela música (título, artista, tom da
+tela, letra e acordes) e o pedido. Pro modelo os acordes vão embutidos na letra —
+`San[G]to` — porque alinhar acorde por coluna de espaços é onde ele mais erra; na
+volta o app converte de novo, e um acorde que já existia volta exatamente como
+estava guardado, mesmo com o tom mudado na tela.
+
+**Nada é aplicado sozinho.** A resposta vira uma proposta com o resumo do modelo, as
+linhas que saem e as que entram, e avisos quando a letra mudou ou a resposta veio
+menor que a original. Aplicar é um passo do desfazer.
+
+**Modelo gratuito é loteria.** O roteador sorteia o modelo a cada chamada: nos testes
+uma resposta levou 4 s, outra 84 s, outra passou de 3 minutos, e uma caiu num classificador que só respondeu
+"safe". Por isso cada pedido tenta até 3 vezes (100 s cada) quando a resposta vem fora
+do formato, cortada ou não vem; erro de chave ou de limite de uso não é repetido. A
+OpenRouter limita os pedidos gratuitos por dia, e esse limite é da chave — ou seja,
+dividido pela banda.
 
 ## Faixas de áudio
 

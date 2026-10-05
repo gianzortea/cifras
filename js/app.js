@@ -2001,7 +2001,8 @@ function songViewMenu(){
     '<button class="opt" data-a="ev"><i>&#43;</i> Adicionar a um evento</button>' +
     '<button class="opt" data-a="audio"><i>&#9835;</i> Áudio de referência</button>' +
     '<div class="sep"></div>' +
-    '<button class="opt" data-a="reset"><i>&#8635;</i> Resetar tom e zoom</button>',
+    '<button class="opt" data-a="reset"><i>&#8635;</i> Resetar tom e zoom</button>' +
+    '<button class="opt" data-a="ia"><i>&#10022;</i> Ajustar com IA</button>',
     (el) => {
       if(ultimo) $('[data-a=desfazer]', el).onclick = () => desfazer();
       if(proximo) $('[data-a=refazer]', el).onclick = () => refazer();
@@ -2036,6 +2037,7 @@ function songViewMenu(){
       };
       $('[data-a=ev]', el).onclick = () => { closeSheet(); addToEventSheet(s.id); };
       $('[data-a=audio]', el).onclick = () => { closeSheet(); audioSheet(); };
+      $('[data-a=ia]', el).onclick = () => { closeSheet(); iaSheet(''); };
       $('[data-a=reset]', el).onclick = () => {
         s.transpose = 0; s.fontSize = null; s.fitMode = null; s.fitScale = null;
         Store.upsertSong(s); closeSheet(); viewSong(s.id, V.ev ? {ev: V.ev.id} : {});
@@ -2419,6 +2421,7 @@ function viewSettings(){
         'que embute os arquivos e fica bem maior.</div>' +
 
       onlineSecaoHTML() +
+      iaSecaoHTML() +
 
       '<div class="sep" style="margin:20px 0"></div>' +
       '<h3 style="font-size:15px;margin:0 0 10px">Versão</h3>' +
@@ -2445,6 +2448,7 @@ function viewSettings(){
   versaoInstalada().then(v => { const el = $('#verNum'); if(el) el.textContent = v; });
 
   onlineLigar();
+  iaLigar();
   $('#expJson').onclick = () => doExport(false);
   $('#expFull').onclick = () => doExport(true);
   $('#impJson').onclick = () => doImport();
@@ -2590,6 +2594,219 @@ async function applyImport(data, replace){
 // inteira por cima do nosso. Com a cifra aberta, a pinça é só nossa.
 ['gesturestart', 'gesturechange'].forEach(ev =>
   document.addEventListener(ev, (e) => { if($('#viewer')) e.preventDefault(); }, { passive: false }));
+
+/* =========================================================
+   IA — "Ajustar com IA" no menu da cifra (ver js/ia.js)
+   A IA propõe; quem aplica é a pessoa, depois de ver o que muda. E o que foi
+   aplicado entra no desfazer.
+   ========================================================= */
+
+/** A chave da OpenRouter: a deste aparelho ou, pra quem entrou com a senha, a do repertório */
+async function chaveDaIA(buscarDeNovo){
+  if(S.iaChave && !buscarDeNovo) return S.iaChave;
+  if(onlineConectado()){
+    const k = await iaBuscarChave(onlineCfg());
+    if(k){ S.iaChave = k; Store.saveSettings(S); return k; }
+  }
+  if(S.iaChave) return S.iaChave;
+  throw new IAErro(onlineConectado()
+    ? 'A IA ainda não foi configurada pra banda. Quem cuida do repertório define a chave em Ajustes → IA.'
+    : 'Pra usar a IA, entre com a senha da banda — ou cole uma chave em Ajustes → IA.', 0);
+}
+
+/** Converte o acorde que o modelo devolveu (no tom da tela) pro que fica guardado */
+function iaGuardador(s){
+  const mapa = {};
+  (s.lines || []).forEach(l => (l.ch || []).forEach(c => { const d = dispChord(c.c, s); if(!(d in mapa)) mapa[d] = c.c; }));
+  // acorde que já existia volta exatamente como estava guardado; só os novos são convertidos
+  return (d) => (d in mapa) ? mapa[d] : toStored(d, s);
+}
+
+/** Uma linha da cifra como texto (acordes em cima), no tom da tela — pra comparar e mostrar */
+function iaBloco(l, s){
+  if(l.t !== 'l') return serializeCifra([l]);
+  return serializeCifra([{ t: 'l', text: l.text, ch: (l.ch || []).map(c => ({ p: c.p, c: dispChord(c.c, s) })) }]);
+}
+
+const IA_EXEMPLOS = [
+  'Organize a cifra nas partes da música (Intro, Primeira parte, Refrão…)',
+  'Coloque em negrito as indicações de repetição',
+  'Simplifique os acordes do refrão'
+];
+
+function iaSheet(pedidoInicial){
+  if(V.grav){ toast('Gravando — pare a gravação primeiro'); return; }
+  sheet('<h3>Ajustar com IA</h3>' +
+    '<div class="field" style="margin-bottom:10px"><textarea id="iaPedido" class="iapedido" maxlength="600" ' +
+      'placeholder="Ex.: no refrão, troque o F#m por D">' + esc(pedidoInicial || '') + '</textarea></div>' +
+    '<div class="iachips">' + IA_EXEMPLOS.map((x, i) => '<button data-ex="' + i + '">' + esc(x) + '</button>').join('') + '</div>' +
+    '<button class="btn primary" id="iaOk" style="margin:12px 0 10px">Pedir</button>' +
+    '<div class="hint">A cifra desta música é enviada a um modelo de IA gratuito (OpenRouter). ' +
+      'Nada muda sem você ver a proposta e tocar em Aplicar — e dá pra desfazer depois.</div>',
+    (el) => {
+      const ta = $('#iaPedido', el);
+      if(!pedidoInicial) setTimeout(() => ta.focus(), 80);
+      $$('[data-ex]', el).forEach(b => b.onclick = () => { ta.value = IA_EXEMPLOS[+b.dataset.ex]; ta.focus(); });
+      $('#iaOk', el).onclick = () => {
+        const pedido = ta.value.trim();
+        if(pedido.length < 4){ toast('Escreva o que você quer mudar'); ta.focus(); return; }
+        iaExecutar(pedido);
+      };
+    });
+}
+
+async function iaExecutar(pedido){
+  const s = V.song, idDaMusica = s.id;
+  const antes = fotoCifra();                               // pra saber se a cifra mudou enquanto a IA pensava
+  const ctl = new AbortController();
+  const t0 = Date.now();
+  let fase = 'Enviando a cifra…';
+
+  const ov = sheet('<h3>Pedindo à IA</h3>' +
+    '<p id="iaFase" style="color:var(--fg2);margin:0 0 8px"></p>' +
+    '<div class="hint" style="margin-bottom:14px">Modelos gratuitos costumam levar de 20 segundos a 2 minutos. Deixe o app aberto.</div>' +
+    '<button class="btn" id="iaCancela">Cancelar</button>',
+    (el, o) => { o.dataset.preso = '1'; $('#iaCancela', el).onclick = () => ctl.abort(); });
+  const pinta = () => { const e = $('#iaFase', ov); if(e) e.textContent = fase + ' ' + Math.round((Date.now() - t0) / 1000) + 's'; };
+  const relogio = setInterval(pinta, 1000);
+  pinta();
+  const fecha = () => { clearInterval(relogio); if(ov.parentNode) closeSheet(); };
+
+  try{
+    let chave = await chaveDaIA(false);
+    const msgs = iaMensagens({ title: s.title, artist: s.artist, key: keyOf(s) }, iaParaTexto(s.lines, (c) => dispChord(c, s)), pedido);
+    const opt = { sinal: ctl.signal, aoTentar: (n, total) => { fase = n === 1 ? 'Aguardando a resposta…' : 'Tentando outro modelo (' + n + ' de ' + total + ')…'; pinta(); } };
+    let r;
+    try{ r = await iaPedirCifra(chave, msgs, opt); }
+    catch(e){
+      // chave recusada: pode ter sido trocada por quem cuida do repertório. Busca a atual e tenta uma vez.
+      if(e.status !== 401 || !onlineConectado()) throw e;
+      const nova = await chaveDaIA(true);
+      if(nova === chave) throw e;
+      chave = nova;
+      r = await iaPedirCifra(chave, msgs, opt);
+    }
+    fecha();
+    // saiu da música (ou ela mudou) enquanto esperava: a proposta já não vale pra o que está na tela
+    if(!$('#viewer') || !V.song || V.song.id !== idDaMusica) return;
+    if(fotoCifra() !== antes){ avisoSheet('A cifra mudou', 'A cifra foi alterada enquanto a IA respondia, então a proposta foi descartada. Peça de novo.'); return; }
+    iaMostrar(pedido, r);
+  }catch(e){
+    fecha();
+    if(e && e.status === -1) return;                       // cancelou: sem aviso
+    if(e && e.status === 401){ S.iaChave = ''; Store.saveSettings(S); }
+    sheet('<h3>Não deu certo</h3><p style="color:var(--fg2);line-height:1.5;margin:0 0 16px">' + esc(e && e.message ? e.message : 'Erro inesperado.') + '</p>' +
+      '<div class="row"><button class="btn" id="iaFechar">Fechar</button><button class="btn primary" id="iaDeNovo">Tentar de novo</button></div>',
+      (el) => { $('#iaFechar', el).onclick = closeSheet; $('#iaDeNovo', el).onclick = () => iaExecutar(pedido); });
+  }
+}
+
+/** Mostra a proposta: o resumo, o que muda linha a linha, e Aplicar / Descartar */
+function iaMostrar(pedido, r){
+  const s = V.song;
+  const rodape = '<button class="btn quieto" id="iaOutro">Pedir outra coisa</button>';
+  const semMudanca = (titulo, texto) => sheet('<h3>' + esc(titulo) + '</h3>' +
+      '<p style="color:var(--fg);line-height:1.5;margin:0 0 16px;white-space:pre-wrap">' + esc(texto) + '</p>' +
+      '<button class="btn primary" id="iaFechar">Ok</button>' + rodape,
+      (el) => { $('#iaFechar', el).onclick = closeSheet; $('#iaOutro', el).onclick = () => iaSheet(''); });
+
+  if(r.cifra === null){ semMudanca('Resposta da IA', r.resumo || 'A IA não propôs nenhuma alteração.'); return; }
+
+  const temAcordes = (s.lines || []).some(l => l.ch && l.ch.length);
+  const novas = iaLinhas(r.cifra, iaGuardador(s), temAcordes);
+  const ops = iaDiff(s.lines.map(l => iaBloco(l, s)), novas.map(l => iaBloco(l, s)));
+  const conta = (op) => ops.filter(o => o.op === op && o.v !== '').length;
+  const mudam = Math.max(conta('add'), conta('del'));        // linha trocada = uma que sai + uma que entra
+  if(!ops.some(o => o.op !== 'eq')){ semMudanca('Nada mudou', r.resumo || 'A IA devolveu a cifra igual.'); return; }
+
+  // avisos que a pessoa precisa ver antes de aplicar
+  const letras = (ls) => ls.filter(l => l.t === 'l').reduce((a, l) => a + (l.text || '').replace(/\s/g, '').length, 0);
+  const tinha = new Set(s.lines.filter(l => l.t === 'l' && l.text).map(l => l.text.trim()));
+  const letraMudou = novas.filter(l => l.t === 'l' && l.text && !tinha.has(l.text.trim())).length;
+  const avisos = [];
+  if(letras(novas) < letras(s.lines) * 0.7) avisos.push('A proposta tem bem menos letra que a cifra atual — pode ter vindo incompleta.');
+  else if(letraMudou) avisos.push('O texto da letra muda em ' + letraMudou + (letraMudou === 1 ? ' linha' : ' linhas') + ' — confira se era isso que você queria.');
+
+  // linhas iguais em sequência longa viram um "…": o que interessa é o que muda
+  const html = [];
+  for(let i = 0; i < ops.length; i++){
+    const o = ops[i];
+    if(o.op === 'eq'){
+      let j = i;
+      while(j < ops.length && ops[j].op === 'eq') j++;
+      const n = j - i, inicio = i === 0, fim = j === ops.length;
+      if(n > 5){
+        if(!inicio){ html.push(iaLinhaDiff(ops[i]), iaLinhaDiff(ops[i + 1])); }
+        html.push('<div class="pula">⋯ ' + (n - (inicio ? 0 : 2) - (fim ? 0 : 2)) + ' linhas iguais</div>');
+        if(!fim){ html.push(iaLinhaDiff(ops[j - 2]), iaLinhaDiff(ops[j - 1])); }
+        i = j - 1;
+        continue;
+      }
+    }
+    html.push(iaLinhaDiff(o));
+  }
+
+  sheet('<h3>Proposta da IA</h3>' +
+    (r.resumo ? '<p style="line-height:1.45;margin:0 0 8px">' + esc(r.resumo) + '</p>' : '') +
+    avisos.map(a => '<div class="iaaviso">' + esc(a) + '</div>').join('') +
+    '<div class="hint" style="margin-bottom:6px">' + mudam + (mudam === 1 ? ' linha muda' : ' linhas mudam') +
+      ' · <span class="mais">verde entra</span> · <span class="menos">vermelho sai</span></div>' +
+    '<div class="iadiff">' + html.join('') + '</div>' +
+    '<div class="row" style="margin-top:12px"><button class="btn" id="iaNao">Descartar</button>' +
+      '<button class="btn primary" id="iaSim">Aplicar</button></div>' + rodape,
+    (el, ov) => {
+      ov.dataset.preso = '1';                               // tocar fora não joga a proposta fora sem querer
+      $('#iaNao', el).onclick = closeSheet;
+      $('#iaOutro', el).onclick = () => iaSheet('');
+      $('#iaSim', el).onclick = () => {
+        const passo = novoPasso('ajuste da IA');
+        V.song.lines = novas;
+        fecharPasso(passo);
+        closeSheet(); renderCifra();
+        toast('Aplicado — dá pra desfazer no menu ⋮', 3200);
+      };
+    });
+}
+function iaLinhaDiff(o){
+  return '<div class="' + (o.op === 'add' ? 'mais' : o.op === 'del' ? 'menos' : '') + '">' + (o.v === '' ? '&nbsp;' : esc(o.v)) + '</div>';
+}
+
+/** Seção IA em Ajustes */
+function iaSecaoHTML(){
+  const conectado = onlineConectado();
+  return '<div class="sep" style="margin:20px 0"></div>' +
+    '<h3 style="font-size:15px;margin:0 0 10px">IA</h3>' +
+    (S.iaChave ? '<div class="okbox">&#10003; IA pronta neste aparelho.</div>' : '') +
+    '<div class="hint" style="margin-bottom:10px">"Ajustar com IA", no menu ⋮ da cifra, pede alterações a um modelo gratuito da OpenRouter. ' +
+      (S.iaChave ? '' : conectado
+        ? 'Se a banda já tem uma chave, ela vem sozinha na primeira vez que você usar.'
+        : 'Entrando com a senha da banda, a chave vem do repertório; ou cole a sua aqui.') + '</div>' +
+    '<details class="avancado"><summary>' + (S.iaChave ? 'Trocar a chave' : 'Definir a chave') + '</summary>' +
+      '<div class="field" style="margin-top:10px"><label>Chave da OpenRouter</label>' + campoSenha('iaChaveIn', 'sk-or-v1-...') +
+        '<div class="hint">Fica guardada neste aparelho, fora dos backups' +
+          (conectado ? '. Como você está conectado, ela também é publicada <b>cifrada</b> no repertório: quem entrou com a senha da banda passa a usar a IA sem colar nada.'
+                     : '.') + '</div></div>' +
+      '<button class="btn" id="iaSalvar">Salvar chave</button>' +
+    '</details>';
+}
+function iaLigar(){
+  $('#iaSalvar').onclick = async () => {
+    const k = $('#iaChaveIn').value.trim();
+    if(!iaChaveValida(k)){ toast('Isso não parece uma chave da OpenRouter (começa com sk-or-)', 3200); return; }
+    S.iaChave = k; Store.saveSettings(S);
+    if(!onlineConectado()){ toast('Chave salva neste aparelho'); viewSettings(); return; }
+    const oc = ocupado('Publicando a chave');
+    try{
+      oc.diga('Protegendo e enviando...');
+      await iaPublicarChave(onlineCfg(), k);
+      oc.fechar(); viewSettings();
+      avisoSheet('Chave publicada', 'A banda já pode usar o "Ajustar com IA". A chave está no repertório cifrada: só abre pra quem entrou com a senha da banda.');
+    }catch(e){
+      oc.fechar(); viewSettings();
+      avisoSheet('Salva só neste aparelho', 'Não deu pra publicar pra banda: ' + esc(e && e.message ? e.message : 'erro inesperado') + ' Salve de novo pra tentar outra vez.');
+    }
+  };
+}
 
 /* =========================================================
    ONLINE — repertório num repositório do GitHub (ver js/online.js)
@@ -3065,6 +3282,8 @@ function onlineLigar(){
         if(!info.escreve) throw new Error('Esse token consegue ler, mas não escrever. Ele precisa da permissão "Contents: Read and write".');
         S.usarOnline = true; S.ghToken = token; Store.saveSettings(S);
         await primeiraSincronia(oc.diga);
+        // a chave da IA do repertório é cifrada com o token: token novo, publica de novo
+        if(S.iaChave){ try{ await iaPublicarChave(onlineCfg(), S.iaChave); }catch(e){} }
         oc.fechar(); viewSettings();
       }catch(e){ oc.fechar(); erroOnline(e); }
     };

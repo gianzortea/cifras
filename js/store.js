@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS = {
   ghRepo: '',            // "dono/repositorio"
   ghToken: '',           // só neste aparelho; NUNCA entra em exportação
   ghSinc: 0,             // última sincronização que deu certo
+  iaChave: '',           // chave da OpenRouter (js/ia.js); só neste aparelho, NUNCA em exportação
 
   notation: 'en'   // 'en' = C D E | 'pt' = Dó Ré Mi (só exibição do tom)
 };
@@ -128,7 +129,7 @@ function assinaturaConteudo(s){
     o JSON exportado vai pra WhatsApp, e-mail e — no modo online — pra um repositório público. */
 function settingsParaExportar(){
   const s = Store.settings();
-  ['ghToken', 'ghRepo', 'online', 'usarOnline', 'ghSinc', 'ghBaixou', 'ghEnviou', 'ghVersao'].forEach(k => { delete s[k]; });
+  ['ghToken', 'ghRepo', 'online', 'usarOnline', 'ghSinc', 'ghBaixou', 'ghEnviou', 'ghVersao', 'iaChave'].forEach(k => { delete s[k]; });
   return s;
 }
 
