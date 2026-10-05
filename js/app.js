@@ -2641,7 +2641,7 @@ function iaSheet(pedidoInicial){
       'placeholder="Ex.: no refrão, troque o F#m por D">' + esc(pedidoInicial || '') + '</textarea></div>' +
     '<div class="iachips">' + IA_EXEMPLOS.map((x, i) => '<button data-ex="' + i + '">' + esc(x) + '</button>').join('') + '</div>' +
     '<button class="btn primary" id="iaOk" style="margin:12px 0 10px">Pedir</button>' +
-    '<div class="hint">A cifra desta música é enviada a um modelo de IA gratuito (OpenRouter). ' +
+    '<div class="hint">A cifra desta música é enviada ' + (iaModelo(S.iaModelo).pago ? 'ao modelo ' + esc(iaModelo(S.iaModelo).nome) : 'a um modelo de IA gratuito') + ' (OpenRouter). ' +
       'Nada muda sem você ver a proposta e tocar em Aplicar — e dá pra desfazer depois.</div>',
     (el) => {
       const ta = $('#iaPedido', el);
@@ -2664,7 +2664,7 @@ async function iaExecutar(pedido){
 
   const ov = sheet('<h3>Pedindo à IA</h3>' +
     '<p id="iaFase" style="color:var(--fg2);margin:0 0 8px"></p>' +
-    '<div class="hint" style="margin-bottom:14px">Modelos gratuitos costumam levar de 20 segundos a 2 minutos. Deixe o app aberto.</div>' +
+    '<div class="hint" style="margin-bottom:14px">' + (iaModelo(S.iaModelo).pago ? 'Costuma levar alguns segundos.' : 'Modelos gratuitos costumam levar de 20 segundos a 2 minutos.') + ' Deixe o app aberto.</div>' +
     '<button class="btn" id="iaCancela">Cancelar</button>',
     (el, o) => { o.dataset.preso = '1'; $('#iaCancela', el).onclick = () => ctl.abort(); });
   const pinta = () => { const e = $('#iaFase', ov); if(e) e.textContent = fase + ' ' + Math.round((Date.now() - t0) / 1000) + 's'; };
@@ -2675,7 +2675,8 @@ async function iaExecutar(pedido){
   try{
     let chave = await chaveDaIA(false);
     const msgs = iaMensagens({ title: s.title, artist: s.artist, key: keyOf(s) }, iaParaTexto(s.lines, (c) => dispChord(c, s)), pedido);
-    const opt = { sinal: ctl.signal, aoTentar: (n, total) => { fase = n === 1 ? 'Aguardando a resposta…' : 'Tentando outro modelo (' + n + ' de ' + total + ')…'; pinta(); } };
+    const opt = { sinal: ctl.signal, modelo: S.iaModelo,
+      aoTentar: (n, total) => { fase = n === 1 ? 'Aguardando a resposta…' : (iaModelo(S.iaModelo).pago ? 'Tentando de novo (' : 'Tentando outro modelo (') + n + ' de ' + total + ')…'; pinta(); } };
     let r;
     try{ r = await iaPedirCifra(chave, msgs, opt); }
     catch(e){
@@ -2777,10 +2778,16 @@ function iaSecaoHTML(){
   return '<div class="sep" style="margin:20px 0"></div>' +
     '<h3 style="font-size:15px;margin:0 0 10px">IA</h3>' +
     (S.iaChave ? '<div class="okbox">&#10003; IA pronta neste aparelho.</div>' : '') +
-    '<div class="hint" style="margin-bottom:10px">"Ajustar com IA", no menu ⋮ da cifra, pede alterações a um modelo gratuito da OpenRouter. ' +
+    '<div class="hint" style="margin-bottom:10px">"Ajustar com IA", no menu ⋮ da cifra, pede alterações a um modelo da OpenRouter. ' +
       (S.iaChave ? '' : conectado
         ? 'Se a banda já tem uma chave, ela vem sozinha na primeira vez que você usar.'
         : 'Entrando com a senha da banda, a chave vem do repertório; ou cole a sua aqui.') + '</div>' +
+    '<div style="margin-bottom:12px"><div class="rotulo">Modelo</div>' +
+      '<label class="escolha"><input type="radio" name="iaModelo" value="gratis"' + (iaModelo(S.iaModelo) === IA_MODELOS.gratis ? ' checked' : '') + '>' +
+        '<span><b>Gratuito</b><small>Não gasta nada. Mais lento (até 2 minutos) e erra mais; tem limite de pedidos por dia.</small></span></label>' +
+      '<label class="escolha"><input type="radio" name="iaModelo" value="gpt41mini"' + (iaModelo(S.iaModelo) === IA_MODELOS.gpt41mini ? ' checked' : '') + '>' +
+        '<span><b>GPT-4.1 mini</b><small>Rápido e mais confiável. Pago: gasta os créditos da chave, menos de 1 centavo de dólar por pedido.</small></span></label>' +
+    '</div>' +
     '<details class="avancado"><summary>' + (S.iaChave ? 'Trocar a chave' : 'Definir a chave') + '</summary>' +
       '<div class="field" style="margin-top:10px"><label>Chave da OpenRouter</label>' + campoSenha('iaChaveIn', 'sk-or-v1-...') +
         '<div class="hint">Fica guardada neste aparelho, fora dos backups' +
@@ -2790,6 +2797,11 @@ function iaSecaoHTML(){
     '</details>';
 }
 function iaLigar(){
+  $$('input[name=iaModelo]').forEach(r => r.onchange = () => {
+    if(!r.checked) return;
+    S.iaModelo = r.value; Store.saveSettings(S);
+    toast('IA: ' + iaModelo(S.iaModelo).nome);
+  });
   $('#iaSalvar').onclick = async () => {
     const k = $('#iaChaveIn').value.trim();
     if(!iaChaveValida(k)){ toast('Isso não parece uma chave da OpenRouter (começa com sk-or-)', 3200); return; }

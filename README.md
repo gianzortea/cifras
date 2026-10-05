@@ -188,8 +188,10 @@ Detalhes que custaram descobrir:
 
 ## Ajustar com IA
 
-Usa o roteador de modelos gratuitos da OpenRouter (`openrouter/free`), direto do
-navegador — sem servidor.
+Fala com a OpenRouter direto do navegador — sem servidor. O modelo é escolhido em
+**Ajustes → IA**, por aparelho: **Gratuito** (o roteador `openrouter/free`, padrão) ou
+**GPT-4.1 mini** (`openai/gpt-4.1-mini`, pago: gasta os créditos da chave — pela
+tabela de preços, uma cifra comum sai por menos de 1 centavo de dólar).
 
 **A chave não está no código.** O app é público (repositório e GitHub Pages), então
 qualquer chave escrita nele seria de todo mundo. Ela é colada uma vez em

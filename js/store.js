@@ -40,6 +40,7 @@ const DEFAULT_SETTINGS = {
   ghToken: '',           // só neste aparelho; NUNCA entra em exportação
   ghSinc: 0,             // última sincronização que deu certo
   iaChave: '',           // chave da OpenRouter (js/ia.js); só neste aparelho, NUNCA em exportação
+  iaModelo: 'gratis',    // 'gratis' | 'gpt41mini' (ver IA_MODELOS)
 
   notation: 'en'   // 'en' = C D E | 'pt' = Dó Ré Mi (só exibição do tom)
 };

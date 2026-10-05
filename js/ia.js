@@ -12,7 +12,13 @@
    ========================================================= */
 
 const IA_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const IA_MODELO = 'openrouter/free';          // roteador de modelos gratuitos
+// Os modelos que dá pra escolher em Ajustes. O gratuito é um roteador: sorteia um
+// modelo grátis a cada chamada. O pago gasta os créditos da chave.
+const IA_MODELOS = {
+  gratis:    { id: 'openrouter/free',     nome: 'Gratuito',     pago: false },
+  gpt41mini: { id: 'openai/gpt-4.1-mini', nome: 'GPT-4.1 mini', pago: true }
+};
+function iaModelo(qual){ return IA_MODELOS[qual] || IA_MODELOS.gratis; }
 const IA_ARQUIVO = 'ia.json';
 const IA_ESPERA = 100000;                      // por tentativa; modelo gratuito às vezes leva minutos
 const IA_TENTATIVAS = 3;
@@ -133,16 +139,19 @@ function iaMensagens(meta, textoCifra, pedido){
   ];
 }
 
-/** Chama o modelo. Devolve { texto, modelo }. opt.sinal = AbortSignal pra cancelar. */
+/** Chama o modelo. Devolve { texto, modelo }. opt.sinal = AbortSignal pra cancelar; opt.modelo = chave de IA_MODELOS. */
 async function iaPedir(chave, mensagens, opt){
   opt = opt || {};
   if(!chave) throw new IAErro('A IA não está configurada.', 0);
+  const modelo = iaModelo(opt.modelo);
   let r;
   try{
     r = await fetch(IA_URL, {
       method: 'POST', signal: opt.sinal,
       headers: { 'Authorization': 'Bearer ' + chave, 'Content-Type': 'application/json', 'X-Title': 'Cifras' },
-      body: JSON.stringify({ model: IA_MODELO, messages: mensagens, temperature: 0.2, reasoning: { effort: 'low' } })
+      // "pensar pouco" só faz sentido no roteador gratuito, onde pode cair um modelo que raciocina por minutos
+      body: JSON.stringify(Object.assign({ model: modelo.id, messages: mensagens, temperature: 0.2 },
+                                         modelo.pago ? {} : { reasoning: { effort: 'low' } }))
     });
   }catch(e){
     if(e && e.name === 'AbortError') throw new IAErro('Cancelado.', -1);
@@ -156,11 +165,14 @@ async function iaPedir(chave, mensagens, opt){
     const st = r.ok ? (+(erro && erro.code) || 502) : r.status;
     let msg;
     if(st === 401) msg = 'A chave da IA não foi aceita (inválida ou desativada).';
-    else if(st === 402) msg = 'A chave da IA está sem créditos.';
+    else if(st === 402) msg = modelo.pago ? 'A chave da IA está sem créditos pra usar o ' + modelo.nome + '. Em Ajustes → IA dá pra voltar pro modelo gratuito.'
+                                          : 'A chave da IA está sem créditos.';
     else if(st === 403) msg = 'A IA recusou este pedido.';
-    else if(st === 404) msg = 'Nenhum modelo gratuito disponível pra essa chave agora. Na OpenRouter, a privacidade da conta precisa permitir os modelos gratuitos.';
+    else if(st === 404) msg = modelo.pago ? 'O modelo ' + modelo.nome + ' não está disponível pra essa chave.'
+                                          : 'Nenhum modelo gratuito disponível pra essa chave agora. Na OpenRouter, a privacidade da conta precisa permitir os modelos gratuitos.';
     else if(st === 408 || st === 504) msg = 'A IA demorou demais pra responder. Tente de novo.';
-    else if(st === 429) msg = 'Limite de uso gratuito atingido. Espere um pouco e tente de novo.';
+    else if(st === 429) msg = modelo.pago ? 'Muitos pedidos seguidos. Espere um pouco e tente de novo.'
+                                          : 'Limite de uso gratuito atingido. Espere um pouco e tente de novo.';
     else msg = 'O serviço de IA falhou agora (' + st + '). Tente de novo.';
     throw new IAErro(msg, st);
   }
@@ -190,6 +202,7 @@ function iaLerResposta(txt){
  * num que demora minutos, ou num que nem é de conversa (um classificador que só
  * responde "safe"). Resposta fora do formato, cortada ou lenta demais = tenta de
  * novo, que o sorteio muda. Erros que não adianta repetir (chave, limite) sobem na hora.
+ *   opt.modelo     chave de IA_MODELOS (padrão: o gratuito)
  *   opt.sinal      AbortSignal do botão Cancelar
  *   opt.aoTentar   (numero, total) -> void
  * devolve { cifra, resumo, modelo }
@@ -208,11 +221,11 @@ async function iaPedirCifra(chave, mensagens, opt){
       opt.sinal.addEventListener('abort', cancelar);
     }
     try{
-      const resp = await iaPedir(chave, mensagens, { sinal: ctl.signal });
+      const resp = await iaPedir(chave, mensagens, { sinal: ctl.signal, modelo: opt.modelo });
       const lido = iaLerResposta(resp.texto);
       if(lido.noFormato && !lido.cortada) return { cifra: lido.cifra, resumo: lido.resumo, modelo: resp.modelo };
       ultimo = new IAErro(lido.cortada ? 'A resposta da IA veio cortada no meio. Tente de novo.'
-                                       : 'Os modelos gratuitos não responderam direito agora. Tente de novo em instantes.', 502);
+                                       : 'A IA não respondeu direito agora. Tente de novo em instantes.', 502);
     }catch(e){
       if(e.status === -1 && estourou) ultimo = new IAErro('A IA demorou demais pra responder. Tente de novo.', 408);
       else if(e.status === -1 || [0, 401, 402, 403, 404, 429].indexOf(e.status) >= 0) throw e;
