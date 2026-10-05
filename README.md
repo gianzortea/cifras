@@ -32,7 +32,7 @@ tela de início". Vira um app: tela cheia, sem barra de navegador, 100% offline
 
 | | |
 |---|---|
-| **Cadastrar** | Cola o texto do Cifra Club (Ctrl+V). Título, artista, tom e capotraste são detectados; acordes ficam alinhados na posição certa. Linha em branco vira só um respiro pequeno; para abrir um **espaço de uma linha inteira**, escreva `---` sozinho numa linha (vários `---` somam). |
+| **Cadastrar** | Cola o texto do Cifra Club (Ctrl+V). Título, artista, tom e capotraste são detectados; acordes ficam alinhados na posição certa. Linha em branco vira só um respiro pequeno; para abrir um **espaço de uma linha inteira**, escreva `---` sozinho numa linha (vários `---` somam). Texto entre asteriscos (`*Refrão 2x*`, `Santo *santo*`) aparece em **negrito**, sem os asteriscos; os acordes da linha continuam em cima das mesmas sílabas. |
 | **Ajustar acordes** | Modo "Editar acordes": arraste pros lados, toque pra trocar, toque na letra pra inserir um novo. Nesse modo dá pra **dar zoom com dois dedos e arrastar a vista em qualquer direção**, para acertar posição com precisão. |
 | **Desfazer / refazer** | Botões ↶ ↷ na barra do modo edição e no menu ⋮ da cifra (Ctrl+Z / Ctrl+Y no computador). Vale pra mover, trocar, inserir e remover acorde, "Simplificar acordes" e "Fixar o tom". Até **20 passos** por música, só na memória: continua valendo se você sair e voltar na mesma música, e recomeça ao abrir outra ou fechar o app. Zoom, colunas e tom da tela ficam de fora. |
 | **Mudar o tom** | Botões ▲/▼ ou escolha direta entre os 12 tons. A grafia acompanha o tom (Bb em tom de Fá, A# em tom de Si). |

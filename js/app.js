@@ -244,7 +244,8 @@ function viewEditor(id){
       '<div class="field"><label>Cifra</label>' +
         '<textarea id="f_body" spellcheck="false" placeholder="Ctrl+V aqui a cifra copiada&#10;&#10;[Intro] G  D  Em  C&#10;&#10;G            D&#10;Exemplo de letra aqui">' + esc(raw) + '</textarea>' +
         '<div class="hint">Cole exatamente como está no site: os acordes acima da letra são detectados e alinhados automaticamente. ' +
-          'Linha em branco vira só um respiro pequeno; pra abrir um <b>espaço de verdade</b>, escreva <b>---</b> sozinho numa linha.</div>' +
+          'Linha em branco vira só um respiro pequeno; pra abrir um <b>espaço de verdade</b>, escreva <b>---</b> sozinho numa linha. ' +
+          'Texto entre asteriscos, como <b>*2x*</b>, aparece em <b>negrito</b>.</div>' +
       '</div>' +
       '<button class="btn primary" id="save2">Salvar cifra</button>' +
     '</div>';
@@ -457,20 +458,62 @@ function teardownViewer(){
   releaseWakeLock();
 }
 
+/* ---------- *negrito* ----------
+   Texto entre asteriscos aparece em negrito, sem os asteriscos. Eles continuam
+   guardados no texto, e a posição dos acordes também é guardada contando com eles
+   (é assim que o editor de texto mostra). Na tela os asteriscos somem, então cada
+   acorde anda pra esquerda o tanto de asteriscos que havia antes dele — senão
+   sairia de cima da sílaba. posTela/posGuardada fazem essa conversão. */
+const NEGRITO_RE = /(\*{1,2})([^\s*](?:[^*]*[^\s*])?)(\*{1,2})/g;      // *assim* (ou **assim**); "2 * 3 * 4" não conta
+
+/** Índices dos asteriscos que são marca de negrito (os que somem na tela) */
+function marcasNegrito(text){
+  if(!text || text.indexOf('*') < 0) return [];
+  const m = [];
+  let r;
+  NEGRITO_RE.lastIndex = 0;
+  while((r = NEGRITO_RE.exec(text))){
+    for(let i = 0; i < r[1].length; i++) m.push(r.index + i);
+    for(let i = r[3].length; i > 0; i--) m.push(r.index + r[0].length - i);
+  }
+  return m;
+}
+function posTela(text, p){
+  const m = marcasNegrito(text);
+  let n = 0;
+  for(const i of m){ if(i < p) n++; else break; }
+  return p - n;
+}
+function posGuardada(text, d){
+  let p = d;
+  for(const i of marcasNegrito(text)){ if(i <= p) p++; else break; }
+  return p;
+}
+function negritoHTML(text){
+  if(!text || text.indexOf('*') < 0) return esc(text);
+  let out = '', fim = 0, r;
+  NEGRITO_RE.lastIndex = 0;
+  while((r = NEGRITO_RE.exec(text))){
+    out += esc(text.slice(fim, r.index)) + '<b>' + esc(r[2]) + '</b>';
+    fim = r.index + r[0].length;
+  }
+  return out + esc(text.slice(fim));
+}
+
 /* ---------- render da cifra ---------- */
 function renderCifra(){
   const s = V.song, out = [];
   (s.lines || []).forEach((l, li) => {
     if(l.t === 'b'){ out.push('<div class="ln blank"></div>'); return; }
     if(l.t === 'gap'){ out.push('<div class="ln gap"></div>'); return; }
-    if(l.t === 's'){ out.push('<div class="ln sec">' + esc(l.text) + '</div>'); return; }
+    if(l.t === 's'){ out.push('<div class="ln sec">' + negritoHTML(l.text) + '</div>'); return; }
     if(l.t === 'tab'){ out.push('<div class="ln tab">' + esc(l.text) + '</div>'); return; }
     const chs = (l.ch || []).map((c, ci) =>
-      '<span class="ch" data-l="' + li + '" data-c="' + ci + '" style="left:' + c.p + 'ch">' +
+      '<span class="ch" data-l="' + li + '" data-c="' + ci + '" style="left:' + posTela(l.text, c.p) + 'ch">' +
       esc(dispChord(c.c, s)) + '</span>').join('');
     out.push('<div class="ln" data-l="' + li + '">' +
       ((l.ch && l.ch.length) ? '<div class="chrow">' + chs + '</div>' : '') +
-      '<div class="lyr" data-l="' + li + '">' + (l.text ? esc(l.text) : '&nbsp;') + '</div></div>');
+      '<div class="lyr" data-l="' + li + '">' + (l.text ? negritoHTML(l.text) : '&nbsp;') + '</div></div>');
   });
   const cif = $('#cifra');
   cif.innerHTML = out.join('');
@@ -548,8 +591,8 @@ function charWidthAt(fs){
 /** Maior linha da música, em caracteres */
 function maiorLinha(){
   return (V.song.lines || []).reduce((max, l) => {
-    const t = (l.text || '').length;
-    const c = (l.ch || []).reduce((a, x) => Math.max(a, x.p + String(x.c).length), 0);
+    const t = (l.text || '').length - marcasNegrito(l.text).length;
+    const c = (l.ch || []).reduce((a, x) => Math.max(a, posTela(l.text, x.p) + String(x.c).length), 0);
     return Math.max(max, t, c);
   }, 1);
 }
@@ -1288,7 +1331,7 @@ function bindEditHandlers(){
     sp.onpointerdown = (e) => {
       e.stopPropagation();
       const li = +sp.dataset.l, ci = +sp.dataset.c;
-      sp0 = V.song.lines[li].ch[ci].p;
+      sp0 = posTela(V.song.lines[li].text, V.song.lines[li].ch[ci].p);
       sx = e.clientX; moved = false; id = e.pointerId;
       try{ sp.setPointerCapture(id); }catch(err){}
       sp.classList.add('drag');
@@ -1309,7 +1352,7 @@ function bindEditHandlers(){
       const li = +sp.dataset.l, ci = +sp.dataset.c;
       if(moved){
         const passo = novoPasso('acorde movido');
-        V.song.lines[li].ch[ci].p = parseInt(sp.dataset.np, 10) || 0;
+        V.song.lines[li].ch[ci].p = posGuardada(V.song.lines[li].text, parseInt(sp.dataset.np, 10) || 0);
         fecharPasso(passo);
       } else {
         chordSheet(li, ci);
@@ -1324,7 +1367,7 @@ function bindEditHandlers(){
       const li = +ly.dataset.l;
       const r = ly.getBoundingClientRect();
       const p = Math.max(0, Math.round((e.clientX - r.left) / cw));
-      addChordAt(li, p);
+      addChordAt(li, posGuardada(V.song.lines[li].text, p));
     };
   });
 }
@@ -1369,8 +1412,9 @@ function chordSheet(li, ci, isNew, passoDoNovo){
       const inp = $('#chIn', el);
       if(isNew) setTimeout(() => { inp.focus(); inp.select(); }, 60);
       $$('[data-q]', el).forEach(b => b.onclick = () => { inp.value = b.dataset.q; });
-      $('#chL', el).onclick = () => { c.p = Math.max(0, c.p - 1); fechar('acorde movido'); renderCifra(); };
-      $('#chR', el).onclick = () => { c.p = c.p + 1; fechar('acorde movido'); renderCifra(); };
+      const empurrar = (d) => { c.p = posGuardada(line.text, Math.max(0, posTela(line.text, c.p) + d)); fechar('acorde movido'); renderCifra(); };
+      $('#chL', el).onclick = () => empurrar(-1);
+      $('#chR', el).onclick = () => empurrar(1);
       $('#chDel', el).onclick = () => {
         line.ch.splice(ci, 1);
         fechar('acorde removido'); closeSheet(); renderCifra(); toast('Removido');
