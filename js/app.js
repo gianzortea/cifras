@@ -245,7 +245,8 @@ function viewEditor(id){
         '<textarea id="f_body" spellcheck="false" placeholder="Ctrl+V aqui a cifra copiada&#10;&#10;[Intro] G  D  Em  C&#10;&#10;G            D&#10;Exemplo de letra aqui">' + esc(raw) + '</textarea>' +
         '<div class="hint">Cole exatamente como está no site: os acordes acima da letra são detectados e alinhados automaticamente. ' +
           'Linha em branco vira só um respiro pequeno; pra abrir um <b>espaço de verdade</b>, escreva <b>---</b> sozinho numa linha. ' +
-          'Texto entre asteriscos, como <b>*2x*</b>, aparece em <b>negrito</b>.</div>' +
+          'Texto entre asteriscos, como <b>*2x*</b>, aparece em <b>negrito</b>. ' +
+          'Apóstrofo colado no acorde, como <b>G\'</b>, marca <b>meio tempo</b>.</div>' +
       '</div>' +
       '<button class="btn primary" id="save2">Salvar cifra</button>' +
     '</div>';
@@ -1016,7 +1017,7 @@ function scrollSheet(){
 
 /* ---------- desenhos de acorde ---------- */
 function diagramSheet(tok){
-  const t = String(tok || '').trim();
+  const t = semMeioTempo(String(tok || '').trim());
   if(!isChordToken(t)) return;
   const vs = findVoicings(t, 3);
   sheet('<h3>' + esc(t) + '</h3>' +
@@ -1400,6 +1401,7 @@ function chordSheet(li, ci, isNew, passoDoNovo){
     '<div class="field"><input id="chIn" value="' + esc(shown) + '" autocapitalize="off" ' +
       'autocorrect="off" spellcheck="false" style="font-family:ui-monospace,monospace;font-size:18px;font-weight:700"></div>' +
     '<div class="chordgrid">' + COMMON.map(x => '<button data-q="' + x + '">' + x + '</button>').join('') + '</div>' +
+    '<button class="btn" id="chMeio" style="margin-top:12px">Meio tempo (\')</button>' +
     '<div class="row" style="margin:12px 0">' +
       '<button class="btn" id="chL">&#9664; 1</button>' +
       '<button class="btn" id="chR">1 &#9654;</button>' +
@@ -1411,7 +1413,19 @@ function chordSheet(li, ci, isNew, passoDoNovo){
     (el) => {
       const inp = $('#chIn', el);
       if(isNew) setTimeout(() => { inp.focus(); inp.select(); }, 60);
-      $$('[data-q]', el).forEach(b => b.onclick = () => { inp.value = b.dataset.q; });
+      const btMeio = $('#chMeio', el);
+      const pintaMeio = () => btMeio.classList.toggle('primary', MEIO_TEMPO_RE.test(inp.value.trim()));
+      btMeio.onclick = () => {
+        const v = inp.value.trim();
+        inp.value = MEIO_TEMPO_RE.test(v) ? semMeioTempo(v) : v + "'";
+        pintaMeio();
+      };
+      inp.oninput = pintaMeio;
+      pintaMeio();
+      // trocar o acorde pelos atalhos mantém a marca que já estava
+      $$('[data-q]', el).forEach(b => b.onclick = () => {
+        inp.value = b.dataset.q + (MEIO_TEMPO_RE.test(inp.value.trim()) ? "'" : '');
+      });
       const empurrar = (d) => { c.p = posGuardada(line.text, Math.max(0, posTela(line.text, c.p) + d)); fechar('acorde movido'); renderCifra(); };
       $('#chL', el).onclick = () => empurrar(-1);
       $('#chR', el).onclick = () => empurrar(1);
@@ -1421,7 +1435,7 @@ function chordSheet(li, ci, isNew, passoDoNovo){
       };
       $('#chOk', el).onclick = () => {
         const val = inp.value.trim();
-        if(val) c.c = toStored(val, V.song);
+        if(val) c.c = normMeioTempo(toStored(val, V.song));
         fechar('acorde alterado'); closeSheet(); renderCifra();
       };
       inp.onkeydown = (e) => { if(e.key === 'Enter') $('#chOk', el).click(); };

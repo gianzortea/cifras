@@ -55,6 +55,13 @@ function noteIndex(note, acc){
   return ((i % 12) + 12) % 12;
 }
 
+/* Apóstrofo colado no fim do acorde (G', D/F#') marca acorde de meio tempo. É só uma
+   marca: não muda o som, então fica fora do nome na hora de transpor e de desenhar.
+   O teclado do celular costuma trocar ' por ’, por isso aceita as variações. */
+const MEIO_TEMPO_RE = /['’‘´`]$/;
+function semMeioTempo(tok){ return String(tok == null ? '' : tok).replace(MEIO_TEMPO_RE, ''); }
+function normMeioTempo(tok){ return String(tok == null ? '' : tok).replace(MEIO_TEMPO_RE, "'"); }
+
 /** Separa "G/B" em corpo + baixo, se o que vem depois da barra for nota */
 function splitBass(tok){
   const i = tok.lastIndexOf('/');
@@ -67,6 +74,8 @@ function splitBass(tok){
 /** Retorna objeto do acorde ou null */
 function parseChord(tok){
   if(!tok) return null;
+  const meio = MEIO_TEMPO_RE.test(tok);
+  if(meio) tok = semMeioTempo(tok);
   const [body, bass] = splitBass(tok);
   const m = body.match(CHORD_RE);
   if(!m) return null;
@@ -84,6 +93,7 @@ function parseChord(tok){
     qual: qual,
     bass: bassIdx,
     bassPt: bassPt,
+    meio: meio,                       // marcado com apóstrofo: meio tempo
     pt: !!PT2EN[note.toUpperCase()]   // notação latina (Dó, Ré...)
   };
 }
@@ -104,7 +114,7 @@ function transposeChord(tok, steps, preferFlat){
   const s = ((steps % 12) + 12) % 12;
   let out = noteName(c.root + s, preferFlat, c.pt) + c.qual;
   if(c.bass !== null) out += '/' + noteName(c.bass + s, preferFlat, c.bassPt);
-  return out;
+  return c.meio ? out + "'" : out;
 }
 
 /** Decide se o tom de destino se escreve com bemol */
@@ -133,5 +143,5 @@ function transposeKey(key, steps){
 function simplifyChord(tok){
   const c = parseChord(tok);
   if(!c) return tok;
-  return noteName(c.root, c.acc === 'b' || c.acc === 'bb', c.pt) + (isMinorQual(c.qual) ? 'm' : '');
+  return noteName(c.root, c.acc === 'b' || c.acc === 'bb', c.pt) + (isMinorQual(c.qual) ? 'm' : '') + (c.meio ? "'" : '');
 }

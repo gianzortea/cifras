@@ -32,7 +32,7 @@ function cleanChordToken(t){
   if(!s) return String(t);
   const m = s.match(/^\(([^()]+)\)$/);
   if(m && isChordToken(m[1])) s = m[1];
-  return s;
+  return isChordToken(s) ? normMeioTempo(s) : s;
 }
 
 /* Linha só de traços ("---"): espaço em branco de propósito na visualização.
