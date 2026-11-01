@@ -55,12 +55,19 @@ function noteIndex(note, acc){
   return ((i % 12) + 12) % 12;
 }
 
-/* Apóstrofo colado no fim do acorde (G', D/F#') marca acorde de meio tempo. É só uma
-   marca: não muda o som, então fica fora do nome na hora de transpor e de desenhar.
-   O teclado do celular costuma trocar ' por ’, por isso aceita as variações. */
-const MEIO_TEMPO_RE = /['’‘´`]$/;
-function semMeioTempo(tok){ return String(tok == null ? '' : tok).replace(MEIO_TEMPO_RE, ''); }
-function normMeioTempo(tok){ return String(tok == null ? '' : tok).replace(MEIO_TEMPO_RE, "'"); }
+/* Apóstrofo colado no fim do acorde marca a duração: G' é meio tempo, G'' é o dobro.
+   É só uma marca: não muda o som, então fica fora do nome na hora de transpor e de
+   desenhar. O teclado do celular costuma trocar ' por ’ e '' por ”, por isso aceita
+   as variações. */
+const TEMPO_RE = /(?:['’‘´`]{1,2}|["”“])$/;
+function semTempo(tok){ return String(tok == null ? '' : tok).replace(TEMPO_RE, ''); }
+/** A marca do acorde na grafia padrão: '', "'" ou "''" */
+function marcaTempo(tok){
+  const m = String(tok == null ? '' : tok).match(TEMPO_RE);
+  if(!m) return '';
+  return m[0].length === 2 || /["”“]/.test(m[0]) ? "''" : "'";
+}
+function normTempo(tok){ return semTempo(tok) + marcaTempo(tok); }
 
 /** Separa "G/B" em corpo + baixo, se o que vem depois da barra for nota */
 function splitBass(tok){
@@ -74,8 +81,8 @@ function splitBass(tok){
 /** Retorna objeto do acorde ou null */
 function parseChord(tok){
   if(!tok) return null;
-  const meio = MEIO_TEMPO_RE.test(tok);
-  if(meio) tok = semMeioTempo(tok);
+  const tempo = marcaTempo(tok);
+  if(tempo) tok = semTempo(tok);
   const [body, bass] = splitBass(tok);
   const m = body.match(CHORD_RE);
   if(!m) return null;
@@ -93,7 +100,7 @@ function parseChord(tok){
     qual: qual,
     bass: bassIdx,
     bassPt: bassPt,
-    meio: meio,                       // marcado com apóstrofo: meio tempo
+    tempo: tempo,                     // ' = meio tempo, '' = dobro do tempo
     pt: !!PT2EN[note.toUpperCase()]   // notação latina (Dó, Ré...)
   };
 }
@@ -114,7 +121,7 @@ function transposeChord(tok, steps, preferFlat){
   const s = ((steps % 12) + 12) % 12;
   let out = noteName(c.root + s, preferFlat, c.pt) + c.qual;
   if(c.bass !== null) out += '/' + noteName(c.bass + s, preferFlat, c.bassPt);
-  return c.meio ? out + "'" : out;
+  return out + c.tempo;
 }
 
 /** Decide se o tom de destino se escreve com bemol */
@@ -143,5 +150,5 @@ function transposeKey(key, steps){
 function simplifyChord(tok){
   const c = parseChord(tok);
   if(!c) return tok;
-  return noteName(c.root, c.acc === 'b' || c.acc === 'bb', c.pt) + (isMinorQual(c.qual) ? 'm' : '') + (c.meio ? "'" : '');
+  return noteName(c.root, c.acc === 'b' || c.acc === 'bb', c.pt) + (isMinorQual(c.qual) ? 'm' : '') + c.tempo;
 }

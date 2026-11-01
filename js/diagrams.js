@@ -284,7 +284,7 @@ function songChords(song, mapFn){
   const seen = [];
   (song.lines || []).forEach(l => {
     (l.ch || []).forEach(c => {
-      const d = semMeioTempo(mapFn ? mapFn(c.c) : c.c);       // G e G' têm o mesmo desenho
+      const d = semTempo(mapFn ? mapFn(c.c) : c.c);           // G, G' e G'' têm o mesmo desenho
       if(isChordToken(d) && seen.indexOf(d) < 0) seen.push(d);
     });
   });

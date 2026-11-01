@@ -246,7 +246,7 @@ function viewEditor(id){
         '<div class="hint">Cole exatamente como está no site: os acordes acima da letra são detectados e alinhados automaticamente. ' +
           'Linha em branco vira só um respiro pequeno; pra abrir um <b>espaço de verdade</b>, escreva <b>---</b> sozinho numa linha. ' +
           'Texto entre asteriscos, como <b>*2x*</b>, aparece em <b>negrito</b>. ' +
-          'Apóstrofo colado no acorde, como <b>G\'</b>, marca <b>meio tempo</b>.</div>' +
+          'Apóstrofo colado no acorde marca a duração: <b>G\'</b> é <b>meio tempo</b> e <b>G\'\'</b> é o <b>dobro do tempo</b>.</div>' +
       '</div>' +
       '<button class="btn primary" id="save2">Salvar cifra</button>' +
     '</div>';
@@ -1017,7 +1017,7 @@ function scrollSheet(){
 
 /* ---------- desenhos de acorde ---------- */
 function diagramSheet(tok){
-  const t = semMeioTempo(String(tok || '').trim());
+  const t = semTempo(String(tok || '').trim());
   if(!isChordToken(t)) return;
   const vs = findVoicings(t, 3);
   sheet('<h3>' + esc(t) + '</h3>' +
@@ -1401,7 +1401,10 @@ function chordSheet(li, ci, isNew, passoDoNovo){
     '<div class="field"><input id="chIn" value="' + esc(shown) + '" autocapitalize="off" ' +
       'autocorrect="off" spellcheck="false" style="font-family:ui-monospace,monospace;font-size:18px;font-weight:700"></div>' +
     '<div class="chordgrid">' + COMMON.map(x => '<button data-q="' + x + '">' + x + '</button>').join('') + '</div>' +
-    '<button class="btn" id="chMeio" style="margin-top:12px">Meio tempo (\')</button>' +
+    '<div class="row" style="margin-top:12px">' +
+      '<button class="btn" data-tempo="\'">Meio tempo (\')</button>' +
+      '<button class="btn" data-tempo="\'\'">Dobro (\'\')</button>' +
+    '</div>' +
     '<div class="row" style="margin:12px 0">' +
       '<button class="btn" id="chL">&#9664; 1</button>' +
       '<button class="btn" id="chR">1 &#9654;</button>' +
@@ -1413,18 +1416,22 @@ function chordSheet(li, ci, isNew, passoDoNovo){
     (el) => {
       const inp = $('#chIn', el);
       if(isNew) setTimeout(() => { inp.focus(); inp.select(); }, 60);
-      const btMeio = $('#chMeio', el);
-      const pintaMeio = () => btMeio.classList.toggle('primary', MEIO_TEMPO_RE.test(inp.value.trim()));
-      btMeio.onclick = () => {
-        const v = inp.value.trim();
-        inp.value = MEIO_TEMPO_RE.test(v) ? semMeioTempo(v) : v + "'";
-        pintaMeio();
+      const btTempo = $$('[data-tempo]', el);
+      const pintaTempo = () => {
+        const m = marcaTempo(inp.value.trim());
+        btTempo.forEach(b => b.classList.toggle('primary', b.dataset.tempo === m));
       };
-      inp.oninput = pintaMeio;
-      pintaMeio();
+      // um acorde tem uma duração só: ligar uma marca troca a outra; tocar de novo desliga
+      btTempo.forEach(b => b.onclick = () => {
+        const v = inp.value.trim();
+        inp.value = semTempo(v) + (marcaTempo(v) === b.dataset.tempo ? '' : b.dataset.tempo);
+        pintaTempo();
+      });
+      inp.oninput = pintaTempo;
+      pintaTempo();
       // trocar o acorde pelos atalhos mantém a marca que já estava
       $$('[data-q]', el).forEach(b => b.onclick = () => {
-        inp.value = b.dataset.q + (MEIO_TEMPO_RE.test(inp.value.trim()) ? "'" : '');
+        inp.value = b.dataset.q + marcaTempo(inp.value.trim());
       });
       const empurrar = (d) => { c.p = posGuardada(line.text, Math.max(0, posTela(line.text, c.p) + d)); fechar('acorde movido'); renderCifra(); };
       $('#chL', el).onclick = () => empurrar(-1);
@@ -1435,7 +1442,7 @@ function chordSheet(li, ci, isNew, passoDoNovo){
       };
       $('#chOk', el).onclick = () => {
         const val = inp.value.trim();
-        if(val) c.c = normMeioTempo(toStored(val, V.song));
+        if(val) c.c = normTempo(toStored(val, V.song));
         fechar('acorde alterado'); closeSheet(); renderCifra();
       };
       inp.onkeydown = (e) => { if(e.key === 'Enter') $('#chOk', el).click(); };

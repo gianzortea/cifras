@@ -75,7 +75,7 @@ function iaDeTexto(texto, guardar){
     while((r = re.exec(linha))){
       const tok = r[1].trim();
       text += linha.slice(fim, r.index);
-      if(parseChord(tok)) ch.push({ p: text.length, c: guardar(normMeioTempo(tok)) });
+      if(parseChord(tok)) ch.push({ p: text.length, c: guardar(normTempo(tok)) });
       else text += r[0];                               // colchete que não é acorde fica na letra
       fim = r.index + r[0].length;
     }
@@ -106,7 +106,7 @@ const IA_SISTEMA = [
   'FORMATO DA CIFRA — use exatamente o mesmo na resposta:',
   '- Os acordes ficam entre colchetes, dentro da letra, colados antes da sílaba em que são tocados: San[G]to, santo [D]é o Senhor',
   '- Linha só de acordes (intro, solo): [G]  [D]  [Em]  [C]',
-  "- Apóstrofo no fim do acorde marca acorde de meio tempo: [D'] ou [D/F#']. Mantenha a marca, a menos que o pedido seja mexer nela.",
+  "- Apóstrofo no fim do acorde marca a duração: um é meio tempo ([D'], [D/F#']), dois é o dobro do tempo ([D''], [D/F#'']). Mantenha a marca, a menos que o pedido seja mexer nela.",
   '- Nome de seção: uma linha começando com "## ". Nomes usuais: ## Intro, ## Primeira parte, ## Segunda parte, ## Pré-refrão, ## Refrão, ## Ponte, ## Solo, ## Final',
   '- Linha em branco separa os blocos. "---" sozinho numa linha abre um espaço maior.',
   '- Texto entre asteriscos aparece em negrito: *2x*',
